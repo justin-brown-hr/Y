@@ -1,0 +1,30 @@
+{
+  "name": "yodobashi-checkout",
+  "version": "1.0.0",
+  "description": "Production-ready Yodobashi checkout automation with API, proxy rotation, and Discord reporting",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "benchmark": "tsx scripts/benchmark.ts",
+    "test:connectivity": "tsx scripts/test-connectivity.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.2",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "playwright": "^1.50.1",
+    "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
