@@ -179,17 +179,27 @@ Measures page-load and selector probe latency. Full end-to-end checkout timing d
 
 ## Architecture
 
+**Default engine: `http`** (same approach as refer `YodoTool`)
+
+| | Refer YodoTool | This project (http mode) |
+|--|----------------|--------------------------|
+| Login | `puppeteer-real-browser` + proxy | Same |
+| Product page | **HTTP GET** via axios (not browser) | Same |
+| Add to cart | **POST** `shoppingcart/add/index.html` | Same |
+| Checkout | HTTP API chain (`callNextCart`, `callGetOrderIndex`, …) | Same |
+| Proxy | `https-proxy-agent` on axios | Same |
+
+Playwright full-page mode is still available with `CHECKOUT_ENGINE=browser` (legacy, slower, more likely blocked).
+
 ```
 src/
-├── index.ts              # Fastify server entry
-├── config.ts             # Env parsing, JST sale time helpers
-├── api/routes.ts         # REST endpoints
-├── browser/yodobashi.ts  # Playwright automation
-├── jobs/job-manager.ts   # Job queue, scheduling, concurrency
-├── services/
-│   ├── discord.ts        # Webhook reporter
-│   └── proxy.ts          # Proxy pool rotation
-└── utils/errors.ts       # Error categorization
+├── http/                   # Refer-compatible HTTP engine (default)
+│   ├── checkout.ts         # callApiAddCart, order flow
+│   ├── product.ts          # HTTP product fetch + parse
+│   ├── login-browser.ts    # puppeteer-real-browser login
+│   └── http-session.ts     # axios + cookie jar + proxy
+├── browser/yodobashi.ts    # Legacy Playwright engine
+└── jobs/job-manager.ts
 ```
 
 ## Troubleshooting

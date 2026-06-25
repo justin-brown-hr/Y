@@ -1,6 +1,8 @@
 import type { AppConfig } from '../config.js';
 import { parseJstSaleTime, productUrlFromInput, randomPreLoginMs } from '../config.js';
 import { BrowserPool, YodobashiAutomation } from '../browser/yodobashi.js';
+import { YodobashiHttpCheckout } from '../http/checkout.js';
+import { HttpSession } from '../http/http-session.js';
 import { DiscordReporter } from '../services/discord.js';
 import { ProxyPool } from '../services/proxy.js';
 import { categorizeError, CheckoutError } from '../utils/errors.js';
@@ -32,6 +34,7 @@ export class JobManager {
   private readonly proxyPool: ProxyPool;
   private readonly browserPool: BrowserPool;
   private readonly automation: YodobashiAutomation;
+  private readonly httpCheckout: YodobashiHttpCheckout;
   private readonly discord: DiscordReporter;
   private activeCount = 0;
   private readonly waitQueue: Array<() => void> = [];
@@ -40,18 +43,23 @@ export class JobManager {
     this.proxyPool = new ProxyPool(config.proxies);
     this.browserPool = new BrowserPool(config, this.proxyPool);
     this.automation = new YodobashiAutomation(config);
+    this.httpCheckout = new YodobashiHttpCheckout(config);
     this.discord = new DiscordReporter(config.discordWebhookUrl);
   }
 
   async init(): Promise<void> {
-    await this.browserPool.init();
+    if (this.config.checkoutEngine === 'browser') {
+      await this.browserPool.init();
+    }
   }
 
   async shutdown(): Promise<void> {
     for (const controller of this.abortControllers.values()) {
       controller.abort();
     }
-    await this.browserPool.shutdown();
+    if (this.config.checkoutEngine === 'browser') {
+      await this.browserPool.shutdown();
+    }
   }
 
   listJobs(): Job[] {
@@ -152,6 +160,224 @@ export class JobManager {
   }
 
   private async runJob(job: Job, accountIndex: number): Promise<void> {
+    if (this.config.checkoutEngine === 'http') {
+      return this.runJobHttp(job, accountIndex);
+    }
+    return this.runJobBrowser(job, accountIndex);
+  }
+
+  private async runJobHttp(job: Job, accountIndex: number): Promise<void> {
+    const controller = new AbortController();
+    this.abortControllers.set(job.id, controller);
+    await this.acquireSlot();
+
+    let proxyUsed: { host: string; port: number } | undefined;
+    const maxProxyAttempts = Math.max(this.proxyPool.count, 1);
+
+    try {
+      if (job.cancelRequested) return;
+      job.status = 'pre_login';
+      job.startedAt = now();
+      this.log(job, 'info', `Starting HTTP job (mode=${job.mode}, account=${job.accountEmail})`);
+
+      let lastError: unknown;
+      for (let attempt = 0; attempt < maxProxyAttempts; attempt++) {
+        const proxy = this.proxyPool.at(accountIndex + attempt);
+        if (proxy) {
+          job.proxyHost = proxy.host;
+          proxyUsed = proxy;
+          this.log(
+            job,
+            'info',
+            `Using proxy ${proxy.host}:${proxy.port} (attempt ${attempt + 1}/${maxProxyAttempts})`,
+          );
+        }
+
+        const session = new HttpSession(
+          proxy,
+          this.config.navigationTimeoutMs,
+          this.config.httpUseProxy,
+        );
+        const account = this.config.accounts[accountIndex];
+
+        try {
+          await this.executeJobHttp(job, session, account, proxy, controller.signal);
+          return;
+        } catch (err) {
+          lastError = err;
+          if (job.cancelRequested || (err instanceof Error && err.message === 'cancelled')) throw err;
+          if (!isRetryableNetworkError(err) || attempt === maxProxyAttempts - 1) throw err;
+          const message = err instanceof Error ? err.message : String(err);
+          this.log(job, 'warn', `Network/proxy error — rotating proxy: ${message.slice(0, 120)}`);
+        }
+      }
+      throw lastError ?? new CheckoutError('All proxies failed', 'proxy_error');
+    } catch (err) {
+      await this.handleJobError(job, err, proxyUsed);
+    } finally {
+      this.abortControllers.delete(job.id);
+      this.releaseSlot();
+    }
+  }
+
+  private async executeJobHttp(
+    job: Job,
+    session: HttpSession,
+    account: { email: string; password: string },
+    proxy: ReturnType<ProxyPool['at']>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const saleAt = job.saleTime ? parseJstSaleTime(job.saleTime) : null;
+
+    if (saleAt) {
+      const preLoginMs = randomPreLoginMs(
+        this.config.preLoginMinMinutes,
+        this.config.preLoginMaxMinutes,
+      );
+      const preLoginAt = new Date(saleAt.getTime() - preLoginMs);
+      const waitMs = preLoginAt.getTime() - Date.now();
+      if (waitMs > 0) {
+        job.status = 'waiting';
+        this.log(job, 'info', `Waiting until pre-login at ${preLoginAt.toISOString()}`);
+        await sleep(waitMs, signal).catch(() => {
+          if (job.cancelRequested) throw new Error('cancelled');
+        });
+      }
+    }
+
+    if (job.cancelRequested) return;
+
+    await this.httpCheckout.login(session, account, proxy, (msg) => this.log(job, 'info', msg));
+    await this.httpCheckout.clearCart(session, (msg) => this.log(job, 'info', msg));
+
+    if (job.mode === 'normal') {
+      await this.runNormalModeHttp(job, session, account, proxy, signal);
+    } else {
+      await this.runMonitorModeHttp(job, session, account, proxy, signal);
+    }
+  }
+
+  private async runNormalModeHttp(
+    job: Job,
+    session: HttpSession,
+    account: { email: string; password: string },
+    proxy: ReturnType<ProxyPool['at']>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const saleAt = job.saleTime ? parseJstSaleTime(job.saleTime) : null;
+    if (saleAt) {
+      const waitMs = saleAt.getTime() - Date.now();
+      if (waitMs > 0) {
+        job.status = 'waiting';
+        this.log(job, 'info', `Waiting for sale at ${saleAt.toISOString()}`);
+        await sleep(waitMs, signal).catch(() => {
+          if (job.cancelRequested) throw new Error('cancelled');
+        });
+      }
+    }
+
+    if (job.cancelRequested) return;
+    job.status = 'running';
+
+    const productUrl = job.productUrls[0];
+    const outcome = await this.httpCheckout.checkout(session, account, productUrl, proxy, (msg) =>
+      this.log(job, 'info', msg),
+    );
+
+    await this.completeJobSuccess(job, productUrl, outcome.orderId, outcome.durationMs, proxy);
+  }
+
+  private async runMonitorModeHttp(
+    job: Job,
+    session: HttpSession,
+    account: { email: string; password: string },
+    proxy: ReturnType<ProxyPool['at']>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    job.status = 'running';
+    let attempts = 0;
+    const maxAttempts = 3600;
+
+    while (!job.cancelRequested && !signal.aborted && attempts < maxAttempts) {
+      for (const url of job.productUrls) {
+        if (await this.httpCheckout.checkProductAvailable(session, url, proxy, (msg) => this.log(job, 'info', msg))) {
+          this.log(job, 'info', `Product available: ${url}`);
+          const outcome = await this.httpCheckout.checkout(session, account, url, proxy, (msg) =>
+            this.log(job, 'info', msg),
+          );
+          await this.completeJobSuccess(job, url, outcome.orderId, outcome.durationMs, proxy);
+          return;
+        }
+      }
+      attempts += 1;
+      this.log(job, 'info', `Monitor poll #${attempts} — not yet available`);
+      await sleep(this.config.monitorPollIntervalMs, signal).catch(() => {
+        if (job.cancelRequested) throw new Error('cancelled');
+      });
+    }
+    throw new CheckoutError('Monitor timeout — product never became available', 'out_of_stock');
+  }
+
+  private async completeJobSuccess(
+    job: Job,
+    productUrl: string,
+    orderId: string | undefined,
+    durationMs: number,
+    proxy?: { host: string; port: number },
+  ): Promise<void> {
+    job.status = 'completed';
+    job.completedAt = now();
+    job.result = { success: true, orderId, durationMs };
+
+    await this.discord
+      .report({
+        success: true,
+        jobId: job.id,
+        mode: job.mode,
+        account: job.accountEmail,
+        productUrl,
+        orderId,
+        durationMs,
+        proxy: proxy ? `${proxy.host}:${proxy.port}` : undefined,
+        timestamp: now(),
+      })
+      .catch((err) => this.log(job, 'warn', `Discord report failed: ${err}`));
+  }
+
+  private async handleJobError(
+    job: Job,
+    err: unknown,
+    proxy?: { host: string; port: number },
+  ): Promise<void> {
+    if (job.cancelRequested || (err instanceof Error && err.message === 'cancelled')) {
+      job.status = 'cancelled';
+      this.log(job, 'warn', 'Job cancelled');
+      return;
+    }
+
+    const { category, message } = categorizeError(err);
+    job.status = 'failed';
+    job.completedAt = now();
+    job.result = { success: false, errorCategory: category, errorMessage: message };
+    this.log(job, 'error', message);
+
+    await this.discord
+      .report({
+        success: false,
+        jobId: job.id,
+        mode: job.mode,
+        account: job.accountEmail,
+        productUrl: job.productUrls[0] ?? '',
+        errorCategory: category,
+        errorMessage: message,
+        durationMs: Date.now() - new Date(job.startedAt ?? job.createdAt).getTime(),
+        proxy: proxy ? `${proxy.host}:${proxy.port}` : undefined,
+        timestamp: now(),
+      })
+      .catch(() => {});
+  }
+
+  private async runJobBrowser(job: Job, accountIndex: number): Promise<void> {
     const controller = new AbortController();
     this.abortControllers.set(job.id, controller);
 
@@ -208,32 +434,7 @@ export class JobManager {
 
       throw lastError ?? new CheckoutError('All proxies failed', 'proxy_error');
     } catch (err) {
-      if (job.cancelRequested || (err instanceof Error && err.message === 'cancelled')) {
-        job.status = 'cancelled';
-        this.log(job, 'warn', 'Job cancelled');
-        return;
-      }
-
-      const { category, message } = categorizeError(err);
-      job.status = 'failed';
-      job.completedAt = now();
-      job.result = { success: false, errorCategory: category, errorMessage: message };
-      this.log(job, 'error', message);
-
-      await this.discord
-        .report({
-          success: false,
-          jobId: job.id,
-          mode: job.mode,
-          account: job.accountEmail,
-          productUrl: job.productUrls[0] ?? '',
-          errorCategory: category,
-          errorMessage: message,
-          durationMs: Date.now() - new Date(job.startedAt ?? job.createdAt).getTime(),
-          proxy: session?.proxy ? `${session.proxy.host}:${session.proxy.port}` : undefined,
-          timestamp: now(),
-        })
-        .catch(() => {});
+      await this.handleJobError(job, err, session?.proxy);
     } finally {
       if (session) await this.browserPool.closeSession(session);
       this.abortControllers.delete(job.id);

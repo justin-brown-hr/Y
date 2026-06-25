@@ -2,7 +2,8 @@
  * Benchmark script — measures checkout step timing against a product page.
  * Run after configuring .env: npm run benchmark
  */
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config({ override: true });
 import { performance } from 'node:perf_hooks';
 import { loadConfig } from '../src/config.js';
 import { BrowserPool } from '../src/browser/yodobashi.js';

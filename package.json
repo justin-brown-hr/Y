@@ -9,16 +9,23 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "benchmark": "tsx scripts/benchmark.ts",
-    "test:connectivity": "tsx scripts/test-connectivity.ts"
+    "test:connectivity": "tsx scripts/test-connectivity.ts",
+    "test:proxy": "tsx scripts/test-proxy.ts"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
+    "axios": "^1.18.1",
+    "cheerio": "^1.2.0",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
+    "https-proxy-agent": "^9.1.0",
     "playwright": "^1.50.1",
+    "puppeteer-real-browser": "^1.4.4",
+    "tough-cookie": "^6.0.1",
+    "undici": "^7.28.0",
     "uuid": "^11.0.5"
   },
   "devDependencies": {

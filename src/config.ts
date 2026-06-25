@@ -26,6 +26,9 @@ export interface AppConfig {
   actionTimeoutMs: number;
   monitorPollIntervalMs: number;
   securityCode?: string;
+  checkoutEngine: 'http' | 'browser';
+  httpUseProxy: boolean;
+  browserUseProxy: boolean;
 }
 
 function parseAccounts(raw: string): Account[] {
@@ -70,6 +73,9 @@ export function loadConfig(): AppConfig {
     actionTimeoutMs: Number(process.env.ACTION_TIMEOUT_MS ?? 8000),
     monitorPollIntervalMs: Number(process.env.MONITOR_POLL_INTERVAL_MS ?? 500),
     securityCode: process.env.SECURITY_CODE || undefined,
+    checkoutEngine: process.env.CHECKOUT_ENGINE === 'browser' ? 'browser' : 'http',
+    httpUseProxy: process.env.HTTP_USE_PROXY !== 'false',
+    browserUseProxy: process.env.BROWSER_USE_PROXY !== 'false',
   };
 }
 
