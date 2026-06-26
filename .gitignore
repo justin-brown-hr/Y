@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 *.log
+logs/
 playwright-report/
 test-results/
 .benchmark-results.json

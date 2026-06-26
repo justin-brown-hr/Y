@@ -43,14 +43,18 @@ function parseAccounts(raw: string): Account[] {
   });
 }
 
+export function parseProxyEntry(entry: string): ProxyConfig {
+  const parts = entry.trim().split(':');
+  if (parts.length !== 4) {
+    throw new Error(`Invalid proxy format: ${entry}. Expected host:port:username:password`);
+  }
+  const [host, port, username, password] = parts;
+  return { host, port: Number(port), username, password };
+}
+
 function parseProxies(raw: string): ProxyConfig[] {
   if (!raw.trim()) return [];
-  return raw.split(',').map((entry) => {
-    const parts = entry.trim().split(':');
-    if (parts.length !== 4) throw new Error(`Invalid proxy format: ${entry}`);
-    const [host, port, username, password] = parts;
-    return { host, port: Number(port), username, password };
-  });
+  return raw.split(',').map((entry) => parseProxyEntry(entry));
 }
 
 export function loadConfig(): AppConfig {

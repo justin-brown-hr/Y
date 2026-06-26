@@ -1,5 +1,7 @@
 # Yodobashi Checkout Automation
 
+> **Client handoff:** see [CLIENT-HANDOFF.md](CLIENT-HANDOFF.md) for setup, checklist, deployment, and how to use.
+
 Production-ready browser automation for [Yodobashi.com](https://www.yodobashi.com/) with a token-authenticated REST API, multi-account proxy routing, scheduled pre-login, and Discord webhook reporting.
 
 ## Features

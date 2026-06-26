@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../config.js';
 import type { JobManager } from '../jobs/job-manager.js';
 import type { Job, StartJobRequest } from '../jobs/types.js';
+import { DiscordReporter } from '../services/discord.js';
 
 function unauthorized(reply: FastifyReply): FastifyReply {
   return reply.code(401).send({ error: 'Unauthorized' });
@@ -17,6 +20,7 @@ export function createAuthHook(config: AppConfig) {
     const token = header.slice(7);
     if (token !== config.apiToken) {
       unauthorized(reply);
+      return;
     }
   };
 }
@@ -24,12 +28,68 @@ export function createAuthHook(config: AppConfig) {
 export function registerRoutes(app: FastifyInstance, jobs: JobManager, config: AppConfig): void {
   const auth = { preHandler: createAuthHook(config) };
 
+  const dashboardHtml = readFileSync(join(process.cwd(), 'public/dashboard.html'), 'utf8');
+
+  const serveDashboard = async (_req: FastifyRequest, reply: FastifyReply) => {
+    return reply.type('text/html').send(dashboardHtml);
+  };
+
+  app.get('/', serveDashboard);
+  app.get('/dashboard', serveDashboard);
+
   app.get('/health', async () => ({
     status: 'ok',
     accounts: config.accounts.length,
     proxies: config.proxies.length,
     maxParallelJobs: config.maxParallelJobs,
   }));
+
+  app.get('/profiles/defaults', auth, async () => ({
+    accounts: config.accounts.map((account, i) => ({
+      id: `env-acc-${i}`,
+      name: `User ${i + 1}`,
+      email: account.email,
+      password: account.password,
+      source: 'env' as const,
+    })),
+    proxies: config.proxies.map((proxy, i) => ({
+      id: `env-proxy-${i}`,
+      name: `Proxy ${i + 1}`,
+      host: proxy.host,
+      value: `${proxy.host}:${proxy.port}:${proxy.username}:${proxy.password}`,
+      source: 'env' as const,
+    })),
+    discordWebhook: config.discordWebhookUrl
+      ? {
+          id: 'env-discord',
+          name: 'Discord',
+          url: config.discordWebhookUrl,
+          source: 'env' as const,
+        }
+      : null,
+  }));
+
+  app.post<{ Body: { webhookUrl?: string } }>('/discord/test', auth, async (request, reply) => {
+    const url = request.body?.webhookUrl?.trim() || config.discordWebhookUrl;
+    if (!url) return reply.code(400).send({ error: 'No webhook URL configured' });
+    try {
+      const reporter = new DiscordReporter(url);
+      await reporter.report({
+        success: true,
+        jobId: 'test',
+        mode: 'normal',
+        account: 'test@example.com',
+        productUrl: 'https://www.yodobashi.com/',
+        orderId: 'TEST',
+        durationMs: 0,
+        timestamp: new Date().toISOString(),
+      });
+      return { ok: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: message });
+    }
+  });
 
   app.post<{ Body: StartJobRequest & { allAccounts?: boolean } }>(
     '/jobs',
@@ -80,6 +140,12 @@ export function registerRoutes(app: FastifyInstance, jobs: JobManager, config: A
       return reply.code(409).send({ error: 'Job cannot be cancelled', status: job.status });
     }
     return { cancelled: true, jobId: request.params.id };
+  });
+
+  app.delete<{ Params: { id: string } }>('/jobs/:id', auth, async (request, reply) => {
+    const deleted = jobs.deleteJob(request.params.id);
+    if (!deleted) return reply.code(404).send({ error: 'Job not found' });
+    return { deleted: true, jobId: request.params.id };
   });
 }
 

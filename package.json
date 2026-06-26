@@ -10,7 +10,8 @@
     "dev": "tsx watch src/index.ts",
     "benchmark": "tsx scripts/benchmark.ts",
     "test:connectivity": "tsx scripts/test-connectivity.ts",
-    "test:proxy": "tsx scripts/test-proxy.ts"
+    "test:proxy": "tsx scripts/test-proxy.ts",
+    "setup:pm2": "bash scripts/setup-pm2.sh"
   },
   "engines": {
     "node": ">=20"

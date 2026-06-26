@@ -1,5 +1,5 @@
-import type { AppConfig } from '../config.js';
-import { parseJstSaleTime, productUrlFromInput, randomPreLoginMs } from '../config.js';
+import type { AppConfig, ProxyConfig } from '../config.js';
+import { parseJstSaleTime, parseProxyEntry, productUrlFromInput, randomPreLoginMs } from '../config.js';
 import { BrowserPool, YodobashiAutomation } from '../browser/yodobashi.js';
 import { YodobashiHttpCheckout } from '../http/checkout.js';
 import { HttpSession } from '../http/http-session.js';
@@ -7,7 +7,7 @@ import { DiscordReporter } from '../services/discord.js';
 import { ProxyPool } from '../services/proxy.js';
 import { categorizeError, CheckoutError } from '../utils/errors.js';
 import { isRetryableNetworkError } from '../browser/navigation.js';
-import type { Job, JobLogEntry, StartJobRequest } from './types.js';
+import type { Job, JobLogEntry, JobRuntimeContext, StartJobRequest } from './types.js';
 import { v4 as uuidv4 } from 'uuid';
 
 function now(): string {
@@ -30,12 +30,12 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 export class JobManager {
   private readonly jobs = new Map<string, Job>();
+  private readonly jobContext = new Map<string, JobRuntimeContext>();
   private readonly abortControllers = new Map<string, AbortController>();
   private readonly proxyPool: ProxyPool;
   private readonly browserPool: BrowserPool;
   private readonly automation: YodobashiAutomation;
   private readonly httpCheckout: YodobashiHttpCheckout;
-  private readonly discord: DiscordReporter;
   private activeCount = 0;
   private readonly waitQueue: Array<() => void> = [];
 
@@ -44,7 +44,6 @@ export class JobManager {
     this.browserPool = new BrowserPool(config, this.proxyPool);
     this.automation = new YodobashiAutomation(config);
     this.httpCheckout = new YodobashiHttpCheckout(config);
-    this.discord = new DiscordReporter(config.discordWebhookUrl);
   }
 
   async init(): Promise<void> {
@@ -109,12 +108,49 @@ export class JobManager {
     return urls.map(productUrlFromInput);
   }
 
+  private resolveJobContext(req: StartJobRequest, accountIndex: number): JobRuntimeContext {
+    const hasCustom =
+      req.accountEmail !== undefined ||
+      req.accountPassword !== undefined ||
+      req.proxy !== undefined;
+
+    const discordWebhookUrl =
+      req.discordWebhookUrl?.trim() || this.config.discordWebhookUrl || undefined;
+
+    if (hasCustom) {
+      if (this.config.checkoutEngine === 'browser') {
+        throw new Error('Custom account/proxy only supported with CHECKOUT_ENGINE=http');
+      }
+      if (!req.accountEmail?.trim() || !req.accountPassword) {
+        throw new Error('accountEmail and accountPassword are required with custom credentials');
+      }
+      if (!req.proxy?.trim()) {
+        throw new Error('proxy is required (host:port:username:password)');
+      }
+      const proxy = parseProxyEntry(req.proxy);
+      return {
+        account: { email: req.accountEmail.trim(), password: req.accountPassword },
+        proxy,
+        discordWebhookUrl,
+      };
+    }
+
+    const account = this.config.accounts[accountIndex];
+    if (!account) {
+      throw new Error(`No account at index ${accountIndex}. Configure ACCOUNTS env var.`);
+    }
+    return { account, proxy: this.proxyPool.at(accountIndex), discordWebhookUrl };
+  }
+
+  private discordForJob(jobId: string): DiscordReporter {
+    const url =
+      this.jobContext.get(jobId)?.discordWebhookUrl || this.config.discordWebhookUrl;
+    return new DiscordReporter(url);
+  }
+
   async startJob(req: StartJobRequest, accountIndex?: number): Promise<Job> {
     const idx = accountIndex ?? req.accountIndex ?? 0;
-    const account = this.config.accounts[idx];
-    if (!account) {
-      throw new Error(`No account at index ${idx}. Configure ACCOUNTS env var.`);
-    }
+    const ctx = this.resolveJobContext(req, idx);
 
     const job: Job = {
       id: uuidv4(),
@@ -122,14 +158,15 @@ export class JobManager {
       status: 'pending',
       productUrls: this.resolveProductUrls(req),
       saleTime: req.saleTime ?? this.config.defaultSaleTime,
-      accountEmail: account.email,
-      proxyHost: this.proxyPool.forAccount(idx)?.host,
+      accountEmail: ctx.account.email,
+      proxyHost: ctx.proxy?.host,
       createdAt: now(),
       logs: [],
       cancelRequested: false,
     };
 
     this.jobs.set(job.id, job);
+    this.jobContext.set(job.id, ctx);
     this.runJob(job, idx).catch((err) => {
       this.log(job, 'error', `Unhandled error: ${err instanceof Error ? err.message : String(err)}`);
     });
@@ -138,6 +175,9 @@ export class JobManager {
   }
 
   async startJobsForAllAccounts(req: StartJobRequest): Promise<Job[]> {
+    if (req.accountEmail || req.accountPassword || req.proxy) {
+      throw new Error('allAccounts cannot be used with custom accountEmail/accountPassword/proxy');
+    }
     if (this.config.accounts.length === 0) {
       throw new Error('No accounts configured');
     }
@@ -159,6 +199,21 @@ export class JobManager {
     return true;
   }
 
+  deleteJob(id: string): boolean {
+    const job = this.jobs.get(id);
+    if (!job) return false;
+
+    const active = ['pending', 'pre_login', 'waiting', 'running'];
+    if (active.includes(job.status)) {
+      this.cancelJob(id);
+    }
+
+    this.jobs.delete(id);
+    this.jobContext.delete(id);
+    this.abortControllers.delete(id);
+    return true;
+  }
+
   private async runJob(job: Job, accountIndex: number): Promise<void> {
     if (this.config.checkoutEngine === 'http') {
       return this.runJobHttp(job, accountIndex);
@@ -171,8 +226,11 @@ export class JobManager {
     this.abortControllers.set(job.id, controller);
     await this.acquireSlot();
 
-    let proxyUsed: { host: string; port: number } | undefined;
-    const maxProxyAttempts = Math.max(this.proxyPool.count, 1);
+    const ctx = this.jobContext.get(job.id);
+    const account = ctx?.account ?? this.config.accounts[accountIndex];
+    const fixedProxy = ctx?.proxy;
+    let proxyUsed: ProxyConfig | undefined;
+    const maxProxyAttempts = fixedProxy ? 1 : Math.max(this.proxyPool.count, 1);
 
     try {
       if (job.cancelRequested) return;
@@ -182,14 +240,16 @@ export class JobManager {
 
       let lastError: unknown;
       for (let attempt = 0; attempt < maxProxyAttempts; attempt++) {
-        const proxy = this.proxyPool.at(accountIndex + attempt);
+        const proxy = fixedProxy ?? this.proxyPool.at(accountIndex + attempt);
         if (proxy) {
           job.proxyHost = proxy.host;
           proxyUsed = proxy;
           this.log(
             job,
             'info',
-            `Using proxy ${proxy.host}:${proxy.port} (attempt ${attempt + 1}/${maxProxyAttempts})`,
+            fixedProxy
+              ? `Using proxy ${proxy.host}:${proxy.port}`
+              : `Using proxy ${proxy.host}:${proxy.port} (attempt ${attempt + 1}/${maxProxyAttempts})`,
           );
         }
 
@@ -198,7 +258,6 @@ export class JobManager {
           this.config.navigationTimeoutMs,
           this.config.httpUseProxy,
         );
-        const account = this.config.accounts[accountIndex];
 
         try {
           await this.executeJobHttp(job, session, account, proxy, controller.signal);
@@ -206,7 +265,7 @@ export class JobManager {
         } catch (err) {
           lastError = err;
           if (job.cancelRequested || (err instanceof Error && err.message === 'cancelled')) throw err;
-          if (!isRetryableNetworkError(err) || attempt === maxProxyAttempts - 1) throw err;
+          if (fixedProxy || !isRetryableNetworkError(err) || attempt === maxProxyAttempts - 1) throw err;
           const message = err instanceof Error ? err.message : String(err);
           this.log(job, 'warn', `Network/proxy error — rotating proxy: ${message.slice(0, 120)}`);
         }
@@ -215,6 +274,7 @@ export class JobManager {
     } catch (err) {
       await this.handleJobError(job, err, proxyUsed);
     } finally {
+      this.jobContext.delete(job.id);
       this.abortControllers.delete(job.id);
       this.releaseSlot();
     }
@@ -329,7 +389,7 @@ export class JobManager {
     job.completedAt = now();
     job.result = { success: true, orderId, durationMs };
 
-    await this.discord
+    await this.discordForJob(job.id)
       .report({
         success: true,
         jobId: job.id,
@@ -361,7 +421,7 @@ export class JobManager {
     job.result = { success: false, errorCategory: category, errorMessage: message };
     this.log(job, 'error', message);
 
-    await this.discord
+    await this.discordForJob(job.id)
       .report({
         success: false,
         jobId: job.id,
@@ -437,6 +497,7 @@ export class JobManager {
       await this.handleJobError(job, err, session?.proxy);
     } finally {
       if (session) await this.browserPool.closeSession(session);
+      this.jobContext.delete(job.id);
       this.abortControllers.delete(job.id);
       this.releaseSlot();
     }
@@ -519,7 +580,7 @@ export class JobManager {
       durationMs: outcome.durationMs,
     };
 
-    await this.discord
+    await this.discordForJob(job.id)
       .report({
         success: true,
         jobId: job.id,
@@ -585,7 +646,7 @@ export class JobManager {
       durationMs: outcome.durationMs,
     };
 
-    await this.discord
+    await this.discordForJob(job.id)
       .report({
         success: true,
         jobId: job.id,

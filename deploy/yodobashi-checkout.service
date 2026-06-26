@@ -1,0 +1,18 @@
+[Unit]
+Description=Yodobashi Checkout API
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_LINUX_USER
+WorkingDirectory=/path/to/yodobashi-checkout
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=5
+
+# Load .env from project root (Node app uses dotenv)
+# Ensure .env exists in WorkingDirectory
+
+[Install]
+WantedBy=multi-user.target

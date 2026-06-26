@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Yodobashi Checkout</title>
+  <style>
+    :root {
+      --nav-dark: #1e3a5f;
+      --nav-mid: #2b579a;
+      --sidebar: #eceff4;
+      --sidebar-hover: #dde4ed;
+      --sidebar-active: #c8d9f0;
+      --bg: #f0f2f5;
+      --panel: #ffffff;
+      --border: #c8cdd5;
+      --border-light: #e4e7ec;
+      --text: #2c3e50;
+      --muted: #6b7c93;
+      --accent: #217346;
+      --accent-blue: #2b579a;
+      --ok: #217346;
+      --warn: #b8860b;
+      --err: #c0392b;
+      --run: #2b579a;
+      --row-alt: #f7f9fc;
+      --row-hover: #e8f0fe;
+      --row-selected: #d0e4ff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: var(--bg); color: var(--text);
+      font-size: 13px; line-height: 1.45;
+      height: 100vh; overflow: hidden;
+    }
+    /* Title bar */
+    .titlebar {
+      height: 36px; background: linear-gradient(180deg, var(--nav-mid), var(--nav-dark));
+      color: #fff; display: flex; align-items: center;
+      padding: 0 12px; font-size: 12px; font-weight: 600;
+      border-bottom: 1px solid #153050;
+    }
+    .titlebar span { opacity: .85; font-weight: 400; margin-left: 8px; font-size: 11px; }
+    /* Shell */
+    .shell { display: flex; height: calc(100vh - 36px); }
+    /* Sidebar */
+    .sidebar {
+      width: 168px; min-width: 168px; background: var(--sidebar);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+    }
+    .sidebar-section {
+      padding: 8px 0 4px; font-size: 10px; font-weight: 600;
+      color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
+      padding-left: 12px;
+    }
+    .nav-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 12px 7px 14px; cursor: pointer;
+      color: var(--text); border-left: 3px solid transparent;
+      user-select: none;
+    }
+    .nav-item:hover { background: var(--sidebar-hover); }
+    .nav-item.active {
+      background: var(--sidebar-active); border-left-color: var(--nav-mid);
+      font-weight: 600; color: var(--nav-dark);
+    }
+    .nav-icon { width: 16px; text-align: center; font-size: 12px; opacity: .7; }
+    .sidebar-foot {
+      margin-top: auto; padding: 10px 12px;
+      border-top: 1px solid var(--border); font-size: 11px; color: var(--muted);
+    }
+    /* Main */
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .toolbar {
+      height: 34px; background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 6px; padding: 0 10px;
+    }
+    .toolbar button, .toolbar label {
+      font-size: 12px; padding: 3px 10px; border-radius: 3px;
+      border: 1px solid var(--border); background: linear-gradient(180deg, #fff, #f0f2f5);
+      color: var(--text); cursor: pointer;
+    }
+    .toolbar button:hover { background: #e8ecf2; }
+    .toolbar .sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+    .toolbar label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+    .content { flex: 1; overflow: auto; padding: 10px; }
+    /* Stats bar */
+    .stats-bar {
+      display: flex; gap: 0; margin-bottom: 10px;
+      border: 1px solid var(--border); background: var(--panel);
+    }
+    .stats-bar .s {
+      flex: 1; padding: 8px 14px; border-right: 1px solid var(--border-light);
+      text-align: center;
+    }
+    .stats-bar .s:last-child { border-right: none; }
+    .stats-bar .n { font-size: 18px; font-weight: 700; color: var(--nav-dark); }
+    .stats-bar .l { font-size: 10px; color: var(--muted); text-transform: uppercase; }
+    /* Panels */
+    .split { display: grid; grid-template-columns: 1fr 300px; gap: 10px; height: calc(100% - 52px); min-height: 400px; }
+    @media (max-width: 900px) { .split { grid-template-columns: 1fr; height: auto; } }
+    .panel {
+      background: var(--panel); border: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .panel-title {
+      padding: 6px 10px; background: linear-gradient(180deg, #f8f9fb, #eceff4);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px; font-weight: 600; color: var(--nav-dark);
+    }
+    .panel-body { padding: 10px; overflow: auto; flex: 1; }
+    /* Data grid (Navicat style) */
+    .grid-wrap { overflow: auto; flex: 1; }
+    table.data-grid { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.data-grid th {
+      background: linear-gradient(180deg, #f0f3f8, #e2e7ef);
+      border: 1px solid var(--border); border-top: none;
+      padding: 5px 8px; text-align: left;
+      font-weight: 600; color: var(--nav-dark); white-space: nowrap;
+      position: sticky; top: 0; z-index: 1;
+    }
+    table.data-grid td {
+      border: 1px solid var(--border-light);
+      padding: 4px 8px; vertical-align: middle;
+    }
+    table.data-grid tr:nth-child(even) td { background: var(--row-alt); }
+    table.data-grid tr:hover td { background: var(--row-hover); }
+    table.data-grid tr.selected td { background: var(--row-selected) !important; }
+    table.data-grid tr.clickable { cursor: pointer; }
+    /* Status badges */
+    .st {
+      display: inline-block; padding: 1px 6px; border-radius: 2px;
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      border: 1px solid transparent;
+    }
+    .st.completed { background: #e6f4ea; color: var(--ok); border-color: #a8dab5; }
+    .st.failed { background: #fce8e6; color: var(--err); border-color: #f5c6c2; }
+    .st.running, .st.pre_login { background: #e8f0fe; color: var(--run); border-color: #aecbfa; }
+    .st.waiting, .st.pending { background: #fef7e0; color: var(--warn); border-color: #fde293; }
+    .st.cancelled { background: #f1f3f4; color: var(--muted); border-color: #dadce0; }
+    /* Form */
+    .field { margin-bottom: 8px; }
+    .field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+    input, select, button, textarea {
+      font: inherit; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 2px;
+      padding: 4px 7px; color: var(--text);
+      background: #fff;
+    }
+    input, select { width: 100%; }
+    input:focus, select:focus { outline: 1px solid var(--nav-mid); border-color: var(--nav-mid); }
+    .btn {
+      cursor: pointer; padding: 5px 12px; border-radius: 2px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, #fff, #e8ecf2);
+      color: var(--text);
+    }
+    .btn:hover { background: #dde4ed; }
+    .btn-primary {
+      background: linear-gradient(180deg, #3a7bd5, var(--nav-mid));
+      border-color: var(--nav-dark); color: #fff;
+    }
+    .btn-primary:hover { filter: brightness(1.05); }
+    .btn-danger {
+      background: linear-gradient(180deg, #e74c3c, #c0392b);
+      border-color: #922b21; color: #fff;
+    }
+    .btn-danger:hover { filter: brightness(1.05); }
+    .btn-sm { padding: 2px 8px; font-size: 11px; }
+    .btn-icon { padding: 2px 7px; min-width: 52px; }
+    .btn-disabled {
+      opacity: .45; cursor: not-allowed;
+      background: #f1f3f4 !important; color: var(--muted) !important;
+    }
+    .btn-full { width: 100%; margin-top: 4px; }
+    .tag {
+      font-size: 10px; padding: 1px 5px; border-radius: 2px;
+      background: #e8f0fe; color: var(--nav-mid); border: 1px solid #aecbfa;
+    }
+    .logs {
+      font-family: Consolas, 'Courier New', monospace; font-size: 11px;
+      background: #fafbfc; border: 1px solid var(--border-light);
+      padding: 6px; max-height: 280px; overflow-y: auto;
+    }
+    .log-line { padding: 1px 0; border-bottom: 1px solid #eee; }
+    .log-line.error { color: var(--err); }
+    .log-line.warn { color: var(--warn); }
+    .log-line.info { color: var(--muted); }
+    .empty { color: var(--muted); padding: 24px; text-align: center; }
+    .hidden { display: none !important; }
+    .mono { font-family: Consolas, monospace; font-size: 11px; color: var(--muted); }
+    .profile-split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 800px) { .profile-split { grid-template-columns: 1fr; } }
+    .form-box {
+      margin-top: 10px; padding: 10px;
+      background: #f7f9fc; border: 1px solid var(--border-light);
+    }
+    .form-box-title { font-size: 11px; font-weight: 600; color: var(--nav-dark); margin-bottom: 8px; }
+    /* Auth */
+    #auth-screen {
+      height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: var(--bg);
+    }
+    .auth-box {
+      width: 340px; background: var(--panel);
+      border: 1px solid var(--border); padding: 28px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.08);
+    }
+    .auth-box h1 { font-size: 16px; color: var(--nav-dark); margin-bottom: 4px; }
+    .auth-box p { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+    .status-pill {
+      font-size: 11px; padding: 2px 8px; border-radius: 10px;
+      background: #e6f4ea; color: var(--ok); border: 1px solid #a8dab5;
+    }
+  </style>
+</head>
+<body>
+  <div id="auth-screen">
+    <div class="auth-box">
+      <h1>Yodobashi Checkout</h1>
+      <p>Enter API token from .env (API_TOKEN)</p>
+      <div class="field"><label>Token</label><input type="password" id="token-input" placeholder="API_TOKEN" /></div>
+      <button class="btn btn-primary btn-full" onclick="saveToken()">Connect</button>
+    </div>
+  </div>
+
+  <div id="app" class="hidden">
+    <div class="titlebar">
+      Yodobashi Checkout
+      <span id="health-badge">Connecting…</span>
+    </div>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="sidebar-section">Navigation</div>
+        <div class="nav-item active" id="nav-jobs" onclick="showTab('jobs')">
+          <span class="nav-icon">▤</span> Jobs
+        </div>
+        <div class="nav-item" id="nav-profiles" onclick="showTab('profiles')">
+          <span class="nav-icon">👤</span> Profiles
+        </div>
+        <div class="sidebar-foot">
+          <label style="cursor:pointer;display:flex;align-items:center;gap:4px">
+            <input type="checkbox" id="auto-refresh" checked /> Auto refresh
+          </label>
+        </div>
+      </aside>
+
+      <div class="main">
+        <div class="toolbar">
+          <button onclick="refresh()">↻ Refresh</button>
+          <div class="sep"></div>
+          <button onclick="showTab('jobs')">Jobs</button>
+          <button onclick="showTab('profiles')">Profiles</button>
+          <div class="sep"></div>
+          <button onclick="logout()">Logout</button>
+        </div>
+
+        <div class="content">
+          <!-- JOBS -->
+          <div id="view-jobs">
+            <div class="stats-bar">
+              <div class="s"><div class="n" id="stat-total">0</div><div class="l">Total</div></div>
+              <div class="s"><div class="n" id="stat-running">0</div><div class="l">Running</div></div>
+              <div class="s"><div class="n" id="stat-completed">0</div><div class="l">Completed</div></div>
+              <div class="s"><div class="n" id="stat-failed">0</div><div class="l">Failed</div></div>
+            </div>
+
+            <div class="split">
+              <div class="panel">
+                <div class="panel-title">Job list</div>
+                <div class="grid-wrap">
+                  <table class="data-grid">
+                    <thead>
+                      <tr>
+                        <th>Status</th><th>Mode</th><th>Account</th><th>Product</th>
+                        <th>Sale</th><th>Proxy</th><th style="width:110px">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="jobs-body"></tbody>
+                  </table>
+                  <div id="jobs-empty" class="empty hidden">No jobs</div>
+                </div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <div class="panel">
+                  <div class="panel-title">New job</div>
+                  <div class="panel-body">
+                    <div class="field"><label>Account</label><select id="f-account"><option value="">Select…</option></select></div>
+                    <div class="field"><label>Proxy</label><select id="f-proxy"><option value="">Select…</option></select></div>
+                    <div class="field"><label>Mode</label>
+                      <select id="f-mode">
+                        <option value="normal">Normal</option>
+                        <option value="monitor">Monitor</option>
+                      </select>
+                    </div>
+                    <div class="field"><label>Product URL</label>
+                      <input type="text" id="f-product" placeholder="https://www.yodobashi.com/product/..." />
+                    </div>
+                    <div class="field" id="sale-row"><label>Sale time (JST)</label>
+                      <input type="text" id="f-sale" value="09:30:00" />
+                    </div>
+                    <button class="btn btn-primary btn-full" onclick="startJob()">▶ Start job</button>
+                  </div>
+                </div>
+
+                <div class="panel" style="flex:1">
+                  <div class="panel-title">Job detail</div>
+                  <div class="panel-body">
+                    <div id="detail-meta" class="mono" style="margin-bottom:8px">Select a job</div>
+                    <div style="display:flex;gap:4px;margin-bottom:8px">
+                      <button id="detail-cancel" class="btn btn-danger btn-sm hidden" onclick="cancelJob(selectedId)">Stop</button>
+                      <button id="detail-delete" class="btn btn-sm hidden" onclick="deleteJob(selectedId)">Delete</button>
+                    </div>
+                    <div class="logs" id="detail-logs"><div class="empty" style="padding:12px">No job selected</div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PROFILES -->
+          <div id="view-profiles" class="hidden">
+            <div class="profile-split">
+              <div class="panel">
+                <div class="panel-title">Accounts</div>
+                <div class="grid-wrap">
+                  <table class="data-grid">
+                    <thead>
+                      <tr><th>Name</th><th>Email</th><th>Source</th><th style="width:72px">Delete</th></tr>
+                    </thead>
+                    <tbody id="accounts-table"></tbody>
+                  </table>
+                </div>
+                <div class="form-box" style="margin:10px">
+                  <div class="form-box-title">+ Add custom account</div>
+                  <div class="field"><label>Label</label><input type="text" id="p-acc-name" placeholder="Optional" /></div>
+                  <div class="field"><label>Email</label><input type="email" id="p-acc-email" /></div>
+                  <div class="field"><label>Password</label><input type="password" id="p-acc-password" /></div>
+                  <button class="btn btn-primary btn-sm" onclick="addAccount()">Add</button>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-title">Proxies</div>
+                <div class="grid-wrap">
+                  <table class="data-grid">
+                    <thead>
+                      <tr><th>Name</th><th>Host</th><th>Source</th><th style="width:72px">Delete</th></tr>
+                    </thead>
+                    <tbody id="proxies-table"></tbody>
+                  </table>
+                </div>
+                <div class="form-box" style="margin:10px">
+                  <div class="form-box-title">+ Add custom proxy</div>
+                  <div class="field"><label>Label</label><input type="text" id="p-proxy-name" placeholder="Optional" /></div>
+                  <div class="field"><label>host:port:user:pass</label>
+                    <input type="text" id="p-proxy-value" placeholder="74.81.32.177:7700:user:pass" />
+                  </div>
+                  <button class="btn btn-primary btn-sm" onclick="addProxy()">Add</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel" style="margin-top:10px">
+              <div class="panel-title">Discord webhook</div>
+              <div class="grid-wrap">
+                <table class="data-grid">
+                  <thead>
+                    <tr><th>Name</th><th>Webhook URL</th><th>Source</th><th style="width:140px">Actions</th></tr>
+                  </thead>
+                  <tbody id="discord-table"></tbody>
+                </table>
+              </div>
+              <div class="form-box" style="margin:10px">
+                <div class="form-box-title">Discord webhook URL</div>
+                <p class="mono" style="margin-bottom:8px;font-size:11px">Job notifications. Custom URL overrides .env when saved.</p>
+                <div class="field">
+                  <label>Webhook URL</label>
+                  <input type="text" id="p-discord-url" placeholder="https://discord.com/api/webhooks/..." />
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  <button class="btn btn-primary btn-sm" onclick="saveDiscord()">Save</button>
+                  <button class="btn btn-sm" onclick="testDiscord()">Test</button>
+                  <button class="btn btn-danger btn-sm" onclick="clearDiscord()">Delete custom</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = '';
+    const PROFILES_KEY = 'yodo_profiles';
+    let token = localStorage.getItem('api_token') || '';
+    let selectedId = null;
+    let timer = null;
+    let currentTab = 'jobs';
+    let envDefaults = { accounts: [], proxies: [], discordWebhook: null };
+
+    function maskWebhook(url) {
+      if (!url) return '—';
+      try {
+        const u = new URL(url);
+        const seg = u.pathname.split('/').filter(Boolean);
+        const tail = seg[seg.length - 1] || '';
+        const masked = tail.length > 8 ? tail.slice(0, 4) + '…' + tail.slice(-4) : tail;
+        return u.origin + '/…/' + masked;
+      } catch {
+        return url.length > 40 ? url.slice(0, 36) + '…' : url;
+      }
+    }
+
+    function getDiscordWebhookUrl() {
+      const custom = loadCustom().discordWebhookUrl;
+      if (custom) return custom;
+      return envDefaults.discordWebhook?.url || '';
+    }
+
+    function uid() {
+      return crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now();
+    }
+
+    function loadCustom() {
+      try {
+        return JSON.parse(localStorage.getItem(PROFILES_KEY) || '{"accounts":[],"proxies":[]}');
+      } catch { return { accounts: [], proxies: [] }; }
+    }
+
+    function saveCustom(data) {
+      localStorage.setItem(PROFILES_KEY, JSON.stringify(data));
+      renderProfiles();
+      populateStartSelects();
+    }
+
+    function allAccounts() { return [...envDefaults.accounts, ...loadCustom().accounts]; }
+    function allProxies() { return [...envDefaults.proxies, ...loadCustom().proxies]; }
+    function getAccount(id) { return allAccounts().find(a => a.id === id); }
+    function getProxy(id) { return allProxies().find(p => p.id === id); }
+
+    async function loadEnvDefaults() {
+      try { envDefaults = await api('/profiles/defaults'); }
+      catch { envDefaults = { accounts: [], proxies: [] }; }
+      populateStartSelects();
+      if (currentTab === 'profiles') renderProfiles();
+    }
+
+    function showTab(tab) {
+      currentTab = tab;
+      document.getElementById('view-jobs').classList.toggle('hidden', tab !== 'jobs');
+      document.getElementById('view-profiles').classList.toggle('hidden', tab !== 'profiles');
+      document.getElementById('nav-jobs').classList.toggle('active', tab === 'jobs');
+      document.getElementById('nav-profiles').classList.toggle('active', tab === 'profiles');
+      if (tab === 'profiles') renderProfiles();
+      if (tab === 'jobs') { populateStartSelects(); refresh(); }
+    }
+
+    function deleteBtn(canDelete, id, type) {
+      if (canDelete) {
+        return `<button class="btn btn-danger btn-sm btn-icon" onclick="removeCustom('${id}','${type}')">Delete</button>`;
+      }
+      return `<button class="btn btn-sm btn-icon btn-disabled" title="Edit .env file on server" disabled>Delete</button>`;
+    }
+
+    function renderProfiles() {
+      const custom = loadCustom();
+      const accRows = [
+        ...envDefaults.accounts.map(a => ({ ...a, source: 'env', readonly: true })),
+        ...custom.accounts.map(a => ({ ...a, source: 'custom', readonly: false })),
+      ];
+      const pxRows = [
+        ...envDefaults.proxies.map(p => ({ ...p, source: 'env', readonly: true })),
+        ...custom.proxies.map(p => ({ ...p, source: 'custom', readonly: false })),
+      ];
+
+      document.getElementById('accounts-table').innerHTML = accRows.length
+        ? accRows.map(a => `<tr>
+            <td>${esc(a.name)}</td>
+            <td>${esc(a.email)}</td>
+            <td><span class="tag">${a.source === 'env' ? '.env' : 'Custom'}</span></td>
+            <td>${deleteBtn(!a.readonly, a.id, 'acc')}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="4" class="empty" style="padding:16px">No accounts</td></tr>';
+
+      document.getElementById('proxies-table').innerHTML = pxRows.length
+        ? pxRows.map(p => `<tr>
+            <td>${esc(p.name)}</td>
+            <td>${esc(p.host || (p.value||'').split(':')[0])}</td>
+            <td><span class="tag">${p.source === 'env' ? '.env' : 'Custom'}</span></td>
+            <td>${deleteBtn(!p.readonly, p.id, 'proxy')}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="4" class="empty" style="padding:16px">No proxies</td></tr>';
+
+      const discordRows = [];
+      if (envDefaults.discordWebhook?.url) {
+        discordRows.push({
+          name: 'Discord (.env)',
+          url: envDefaults.discordWebhook.url,
+          source: 'env',
+          readonly: true,
+        });
+      }
+      const customDiscord = loadCustom().discordWebhookUrl;
+      if (customDiscord) {
+        discordRows.push({
+          name: 'Discord (custom)',
+          url: customDiscord,
+          source: 'custom',
+          readonly: false,
+        });
+      }
+
+      document.getElementById('discord-table').innerHTML = discordRows.length
+        ? discordRows.map(d => `<tr>
+            <td>${esc(d.name)}</td>
+            <td title="${esc(d.url)}">${esc(maskWebhook(d.url))}</td>
+            <td><span class="tag">${d.source === 'env' ? '.env' : 'Custom'}</span></td>
+            <td>${d.readonly
+              ? '<button class="btn btn-sm btn-icon btn-disabled" disabled>Delete</button>'
+              : '<button class="btn btn-danger btn-sm btn-icon" onclick="clearDiscord()">Delete</button>'}
+            </td>
+          </tr>`).join('')
+        : '<tr><td colspan="4" class="empty" style="padding:16px">No webhook — set in .env or below</td></tr>';
+
+      const active = getDiscordWebhookUrl();
+      document.getElementById('p-discord-url').value = loadCustom().discordWebhookUrl || '';
+    }
+
+    function saveDiscord() {
+      const url = document.getElementById('p-discord-url').value.trim();
+      if (!url) return alert('Webhook URL required');
+      if (!url.startsWith('https://discord.com/api/webhooks/')) {
+        return alert('URL must start with https://discord.com/api/webhooks/');
+      }
+      const data = loadCustom();
+      data.discordWebhookUrl = url;
+      saveCustom(data);
+      alert('Discord webhook saved');
+    }
+
+    function clearDiscord() {
+      if (!loadCustom().discordWebhookUrl) return;
+      if (!confirm('Delete custom Discord webhook?')) return;
+      const data = loadCustom();
+      delete data.discordWebhookUrl;
+      saveCustom(data);
+      document.getElementById('p-discord-url').value = '';
+    }
+
+    async function testDiscord() {
+      const url = document.getElementById('p-discord-url').value.trim() || getDiscordWebhookUrl();
+      if (!url) return alert('No webhook URL to test');
+      try {
+        await api('/discord/test', { method: 'POST', body: JSON.stringify({ webhookUrl: url }) });
+        alert('Test message sent — check Discord');
+      } catch (e) { alert(e.message); }
+    }
+
+    function populateStartSelects() {
+      const accSel = document.getElementById('f-account');
+      const proxySel = document.getElementById('f-proxy');
+      const prevAcc = accSel.value, prevProxy = proxySel.value;
+      const custom = loadCustom();
+
+      let ah = '<option value="">Select account…</option>';
+      if (envDefaults.accounts.length)
+        ah += '<optgroup label=".env">' + envDefaults.accounts.map(a =>
+          `<option value="${a.id}">${esc(a.name)} — ${esc(a.email)}</option>`).join('') + '</optgroup>';
+      if (custom.accounts.length)
+        ah += '<optgroup label="Custom">' + custom.accounts.map(a =>
+          `<option value="${a.id}">${esc(a.name)} — ${esc(a.email)}</option>`).join('') + '</optgroup>';
+      accSel.innerHTML = ah;
+
+      let ph = '<option value="">Select proxy…</option>';
+      if (envDefaults.proxies.length)
+        ph += '<optgroup label=".env">' + envDefaults.proxies.map(p =>
+          `<option value="${p.id}">${esc(p.name)} — ${esc(p.host)}</option>`).join('') + '</optgroup>';
+      if (custom.proxies.length)
+        ph += '<optgroup label="Custom">' + custom.proxies.map(p =>
+          `<option value="${p.id}">${esc(p.name)} — ${esc(p.host)}</option>`).join('') + '</optgroup>';
+      proxySel.innerHTML = ph;
+
+      if (prevAcc && allAccounts().some(a => a.id === prevAcc)) accSel.value = prevAcc;
+      else if (envDefaults.accounts[0]) accSel.value = envDefaults.accounts[0].id;
+      if (prevProxy && allProxies().some(p => p.id === prevProxy)) proxySel.value = prevProxy;
+      else if (envDefaults.proxies[0]) proxySel.value = envDefaults.proxies[0].id;
+    }
+
+    function addAccount() {
+      const name = document.getElementById('p-acc-name').value.trim();
+      const email = document.getElementById('p-acc-email').value.trim();
+      const password = document.getElementById('p-acc-password').value;
+      if (!email || !password) return alert('Email and password required');
+      const data = loadCustom();
+      data.accounts.push({ id: uid(), name: name || email.split('@')[0], email, password });
+      saveCustom(data);
+      ['p-acc-name','p-acc-email','p-acc-password'].forEach(id => document.getElementById(id).value = '');
+    }
+
+    function addProxy() {
+      const name = document.getElementById('p-proxy-name').value.trim();
+      const value = document.getElementById('p-proxy-value').value.trim();
+      if (!value) return alert('Proxy required');
+      if (value.split(':').length !== 4) return alert('Format: host:port:user:pass');
+      const parts = value.split(':');
+      const data = loadCustom();
+      data.proxies.push({ id: uid(), name: name || parts[0], value, host: parts[0] });
+      saveCustom(data);
+      ['p-proxy-name','p-proxy-value'].forEach(id => document.getElementById(id).value = '');
+    }
+
+    function removeCustom(id, type) {
+      if (!confirm('Delete this profile?')) return;
+      const data = loadCustom();
+      if (type === 'acc') data.accounts = data.accounts.filter(a => a.id !== id);
+      else data.proxies = data.proxies.filter(p => p.id !== id);
+      saveCustom(data);
+    }
+
+    function headers(hasBody = false) {
+      const h = { Authorization: 'Bearer ' + token };
+      if (hasBody) h['Content-Type'] = 'application/json';
+      return h;
+    }
+
+    async function api(path, opts = {}) {
+      const hasBody = opts.body != null;
+      const res = await fetch(API + path, { ...opts, headers: { ...headers(hasBody), ...opts.headers } });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    async function initApp() {
+      await loadEnvDefaults();
+      populateStartSelects();
+      refresh();
+      startAutoRefresh();
+    }
+
+    function saveToken() {
+      token = document.getElementById('token-input').value.trim();
+      if (!token) return;
+      localStorage.setItem('api_token', token);
+      document.getElementById('auth-screen').classList.add('hidden');
+      document.getElementById('app').classList.remove('hidden');
+      initApp();
+    }
+
+    function logout() { localStorage.removeItem('api_token'); location.reload(); }
+
+    function esc(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function stClass(s) { return 'st ' + s; }
+    function shortUrl(url) {
+      const m = url.match(/product\/(\d+)/);
+      return m ? '…' + m[1].slice(-8) : (url||'').slice(0, 18);
+    }
+
+    function jobActions(j) {
+      const active = ['pending','pre_login','waiting','running'].includes(j.status);
+      let h = '';
+      if (active) h += `<button class="btn btn-danger btn-sm btn-icon" onclick="event.stopPropagation();cancelJob('${j.id}')">Stop</button> `;
+      h += `<button class="btn btn-sm btn-icon" onclick="event.stopPropagation();deleteJob('${j.id}')">Delete</button>`;
+      return h;
+    }
+
+    async function refresh() {
+      if (currentTab !== 'jobs') return;
+      try {
+        const acc = allAccounts().length, px = allProxies().length;
+        document.getElementById('health-badge').textContent =
+          `Online · ${acc} account${acc!==1?'s':''} · ${px} prox${px!==1?'ies':'y'}`;
+
+        const { jobs } = await api('/jobs');
+        document.getElementById('stat-total').textContent = jobs.length;
+        document.getElementById('stat-running').textContent = jobs.filter(j => ['running','pre_login','waiting'].includes(j.status)).length;
+        document.getElementById('stat-completed').textContent = jobs.filter(j => j.status === 'completed').length;
+        document.getElementById('stat-failed').textContent = jobs.filter(j => j.status === 'failed').length;
+
+        const tbody = document.getElementById('jobs-body');
+        const empty = document.getElementById('jobs-empty');
+        if (!jobs.length) {
+          tbody.innerHTML = '';
+          empty.classList.remove('hidden');
+        } else {
+          empty.classList.add('hidden');
+          tbody.innerHTML = jobs.map(j => `
+            <tr class="clickable ${j.id===selectedId?'selected':''}" onclick="selectJob('${j.id}')">
+              <td><span class="${stClass(j.status)}">${j.status}</span></td>
+              <td>${j.mode}</td>
+              <td>${esc((j.accountEmail||'').split('@')[0])}</td>
+              <td title="${esc(j.productUrls[0]||'')}">${shortUrl(j.productUrls[0]||'')}</td>
+              <td>${j.saleTime||'—'}</td>
+              <td>${j.proxyHost||'—'}</td>
+              <td>${jobActions(j)}</td>
+            </tr>`).join('');
+        }
+
+        if (selectedId && jobs.some(j => j.id === selectedId)) await selectJob(selectedId, true);
+        else if (selectedId) clearDetail();
+      } catch (e) {
+        document.getElementById('health-badge').textContent = 'Error: ' + e.message;
+      }
+    }
+
+    function clearDetail() {
+      selectedId = null;
+      document.getElementById('detail-meta').textContent = 'Select a job';
+      document.getElementById('detail-logs').innerHTML = '<div class="empty" style="padding:12px">No job selected</div>';
+      document.getElementById('detail-cancel').classList.add('hidden');
+      document.getElementById('detail-delete').classList.add('hidden');
+    }
+
+    async function selectJob(id, silent) {
+      selectedId = id;
+      try {
+        const job = await api('/jobs/' + id);
+        const r = job.result;
+        document.getElementById('detail-meta').innerHTML =
+          `<b>${job.status}</b> · ${job.mode}<br>${esc(job.accountEmail)}<br>${job.id}` +
+          (r ? `<br>${r.success ? '✓ '+esc(r.orderId||'OK') : '✗ '+esc(r.errorCategory||'')}` : '');
+        document.getElementById('detail-cancel').classList.toggle('hidden', !['pending','pre_login','waiting','running'].includes(job.status));
+        document.getElementById('detail-delete').classList.remove('hidden');
+        const logs = document.getElementById('detail-logs');
+        logs.innerHTML = job.logs?.length
+          ? job.logs.map(l => `<div class="log-line ${l.level}">[${l.timestamp.slice(11,19)}] ${esc(l.message)}</div>`).join('')
+          : '<div class="empty" style="padding:12px">No logs</div>';
+        logs.scrollTop = logs.scrollHeight;
+        if (!silent) refresh();
+      } catch (e) {
+        document.getElementById('detail-logs').innerHTML = '<div class="empty">'+esc(e.message)+'</div>';
+      }
+    }
+
+    async function startJob() {
+      const account = getAccount(document.getElementById('f-account').value);
+      const proxy = getProxy(document.getElementById('f-proxy').value);
+      if (!account) return alert('Select an account');
+      if (!proxy) return alert('Select a proxy');
+      const mode = document.getElementById('f-mode').value;
+      const productUrl = document.getElementById('f-product').value.trim();
+      if (!productUrl) return alert('Product URL required');
+      const body = { mode, productUrl, accountEmail: account.email, accountPassword: account.password, proxy: proxy.value };
+      const discordUrl = getDiscordWebhookUrl();
+      if (discordUrl) body.discordWebhookUrl = discordUrl;
+      if (mode === 'normal') body.saleTime = document.getElementById('f-sale').value.trim() || '09:30:00';
+      if (mode === 'monitor') body.productUrls = [productUrl];
+      try { await api('/jobs', { method: 'POST', body: JSON.stringify(body) }); refresh(); }
+      catch (e) { alert(e.message); }
+    }
+
+    async function cancelJob(id) {
+      if (!confirm('Stop this job?')) return;
+      try { await api('/jobs/'+id+'/cancel', { method: 'POST' }); refresh(); }
+      catch (e) { alert(e.message); }
+    }
+
+    async function deleteJob(id) {
+      if (!confirm('Delete this job?')) return;
+      try {
+        await api('/jobs/'+id, { method: 'DELETE' });
+        if (selectedId === id) clearDetail();
+        refresh();
+      } catch (e) { alert(e.message); }
+    }
+
+    function startAutoRefresh() {
+      if (timer) clearInterval(timer);
+      timer = setInterval(() => { if (document.getElementById('auto-refresh').checked) refresh(); }, 3000);
+    }
+
+    document.getElementById('f-mode').addEventListener('change', e => {
+      document.getElementById('sale-row').style.display = e.target.value === 'normal' ? '' : 'none';
+    });
+
+    if (token) {
+      document.getElementById('auth-screen').classList.add('hidden');
+      document.getElementById('app').classList.remove('hidden');
+      initApp();
+    }
+  </script>
+</body>
+</html>

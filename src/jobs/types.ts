@@ -38,6 +38,19 @@ export interface StartJobRequest {
   productCode?: string;
   saleTime?: string;
   accountIndex?: number;
+  /** Override .env account for this job */
+  accountEmail?: string;
+  accountPassword?: string;
+  /** Override .env proxy: host:port:username:password */
+  proxy?: string;
+  /** Override .env Discord webhook for this job */
+  discordWebhookUrl?: string;
+}
+
+export interface JobRuntimeContext {
+  account: { email: string; password: string };
+  proxy?: { host: string; port: number; username: string; password: string };
+  discordWebhookUrl?: string;
 }
 
 export interface JobSummary {
