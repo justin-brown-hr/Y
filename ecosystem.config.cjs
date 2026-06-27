@@ -5,8 +5,11 @@ module.exports = {
       name: 'yodobashi-checkout',
       script: 'dist/index.js',
       cwd: __dirname,
+      exec_mode: 'fork',
       instances: 1,
       autorestart: true,
+      restart_delay: 3000,
+      max_restarts: 10,
       watch: false,
       max_memory_restart: '1G',
       env: {

@@ -28,14 +28,29 @@
       --row-selected: #d0e4ff;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html {
+      height: 100%;
+      max-height: 100vh;
+      overflow: hidden;
+    }
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       background: var(--bg); color: var(--text);
       font-size: 13px; line-height: 1.45;
-      height: 100vh; overflow: hidden;
+      height: 100%;
+      max-height: 100vh;
+      overflow: hidden;
+    }
+    #app:not(.hidden) {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      max-height: 100vh;
+      overflow: hidden;
     }
     /* Title bar */
     .titlebar {
+      flex-shrink: 0;
       height: 36px; background: linear-gradient(180deg, var(--nav-mid), var(--nav-dark));
       color: #fff; display: flex; align-items: center;
       padding: 0 12px; font-size: 12px; font-weight: 600;
@@ -43,12 +58,19 @@
     }
     .titlebar span { opacity: .85; font-weight: 400; margin-left: 8px; font-size: 11px; }
     /* Shell */
-    .shell { display: flex; height: calc(100vh - 36px); }
+    .shell {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
     /* Sidebar */
     .sidebar {
       width: 168px; min-width: 168px; background: var(--sidebar);
       border-right: 1px solid var(--border);
       display: flex; flex-direction: column;
+      overflow-y: auto;
+      max-height: 100%;
     }
     .sidebar-section {
       padding: 8px 0 4px; font-size: 10px; font-weight: 600;
@@ -72,8 +94,13 @@
       border-top: 1px solid var(--border); font-size: 11px; color: var(--muted);
     }
     /* Main */
-    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .main {
+      flex: 1; min-width: 0; min-height: 0;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
     .toolbar {
+      flex-shrink: 0;
       height: 34px; background: var(--panel);
       border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 6px; padding: 0 10px;
@@ -86,9 +113,23 @@
     .toolbar button:hover { background: #e8ecf2; }
     .toolbar .sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
     .toolbar label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
-    .content { flex: 1; overflow: auto; padding: 10px; }
+    .content {
+      flex: 1; min-height: 0;
+      overflow: hidden;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+    }
+    .view-pane {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
     /* Stats bar */
     .stats-bar {
+      flex-shrink: 0;
       display: flex; gap: 0; margin-bottom: 10px;
       border: 1px solid var(--border); background: var(--panel);
     }
@@ -100,20 +141,67 @@
     .stats-bar .n { font-size: 18px; font-weight: 700; color: var(--nav-dark); }
     .stats-bar .l { font-size: 10px; color: var(--muted); text-transform: uppercase; }
     /* Panels */
-    .split { display: grid; grid-template-columns: 1fr 300px; gap: 10px; height: calc(100% - 52px); min-height: 400px; }
-    @media (max-width: 900px) { .split { grid-template-columns: 1fr; height: auto; } }
+    .split {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 10px;
+      overflow: hidden;
+    }
+    @media (max-width: 900px) {
+      .split { grid-template-columns: 1fr; overflow-y: auto; }
+    }
+    .sidebar-col {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .sidebar-col .panel-form {
+      flex-shrink: 0;
+      max-height: 42%;
+      overflow: hidden;
+    }
+    .sidebar-col .panel-form .panel-body {
+      overflow-y: auto;
+      max-height: calc(42vh - 32px);
+    }
     .panel {
       background: var(--panel); border: 1px solid var(--border);
-      display: flex; flex-direction: column; overflow: hidden;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
+    }
+    .panel-grow {
+      flex: 1;
+      min-height: 0;
     }
     .panel-title {
+      flex-shrink: 0;
       padding: 6px 10px; background: linear-gradient(180deg, #f8f9fb, #eceff4);
       border-bottom: 1px solid var(--border);
       font-size: 12px; font-weight: 600; color: var(--nav-dark);
     }
-    .panel-body { padding: 10px; overflow: auto; flex: 1; }
+    .panel-body {
+      padding: 10px;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 0;
+    }
+    .panel-body-tight {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
     /* Data grid (Navicat style) */
-    .grid-wrap { overflow: auto; flex: 1; }
+    .grid-wrap {
+      overflow: auto;
+      flex: 1;
+      min-height: 0;
+    }
     table.data-grid { width: 100%; border-collapse: collapse; font-size: 12px; }
     table.data-grid th {
       background: linear-gradient(180deg, #f0f3f8, #e2e7ef);
@@ -183,7 +271,10 @@
     .logs {
       font-family: Consolas, 'Courier New', monospace; font-size: 11px;
       background: #fafbfc; border: 1px solid var(--border-light);
-      padding: 6px; max-height: 280px; overflow-y: auto;
+      padding: 6px;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
     }
     .log-line { padding: 1px 0; border-bottom: 1px solid #eee; }
     .log-line.error { color: var(--err); }
@@ -192,17 +283,49 @@
     .empty { color: var(--muted); padding: 24px; text-align: center; }
     .hidden { display: none !important; }
     .mono { font-family: Consolas, monospace; font-size: 11px; color: var(--muted); }
-    .profile-split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    @media (max-width: 800px) { .profile-split { grid-template-columns: 1fr; } }
+    .profile-split {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      overflow: hidden;
+    }
+    @media (max-width: 800px) {
+      .profile-split { grid-template-columns: 1fr; overflow-y: auto; }
+    }
+    .profile-split > .panel {
+      min-height: 0;
+    }
+    .profile-split .grid-wrap {
+      flex: 1;
+      min-height: 0;
+    }
+    .panel-discord {
+      flex-shrink: 0;
+      max-height: 38vh;
+      margin-top: 10px;
+    }
+    .panel-discord .grid-wrap {
+      max-height: 100px;
+      flex: none;
+    }
+    .panel-discord .form-box {
+      overflow-y: auto;
+    }
     .form-box {
-      margin-top: 10px; padding: 10px;
+      flex-shrink: 0;
+      margin: 10px; padding: 10px;
       background: #f7f9fc; border: 1px solid var(--border-light);
+      max-height: 45%;
+      overflow-y: auto;
     }
     .form-box-title { font-size: 11px; font-weight: 600; color: var(--nav-dark); margin-bottom: 8px; }
     /* Auth */
     #auth-screen {
-      height: 100vh; display: flex; align-items: center; justify-content: center;
-      background: var(--bg);
+      height: 100vh; max-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg); overflow: auto;
     }
     .auth-box {
       width: 340px; background: var(--panel);
@@ -214,6 +337,10 @@
     .status-pill {
       font-size: 11px; padding: 2px 8px; border-radius: 10px;
       background: #e6f4ea; color: var(--ok); border: 1px solid #a8dab5;
+    }
+    .error-banner {
+      background: #fce8e6; border: 1px solid #f5c6c2; color: var(--err);
+      padding: 8px 10px; margin-bottom: 8px; font-size: 12px; border-radius: 2px;
     }
   </style>
 </head>
@@ -261,7 +388,7 @@
 
         <div class="content">
           <!-- JOBS -->
-          <div id="view-jobs">
+          <div id="view-jobs" class="view-pane">
             <div class="stats-bar">
               <div class="s"><div class="n" id="stat-total">0</div><div class="l">Total</div></div>
               <div class="s"><div class="n" id="stat-running">0</div><div class="l">Running</div></div>
@@ -286,8 +413,8 @@
                 </div>
               </div>
 
-              <div style="display:flex;flex-direction:column;gap:10px">
-                <div class="panel">
+              <div class="sidebar-col">
+                <div class="panel panel-form">
                   <div class="panel-title">New job</div>
                   <div class="panel-body">
                     <div class="field"><label>Account</label><select id="f-account"><option value="">Select…</option></select></div>
@@ -299,18 +426,20 @@
                       </select>
                     </div>
                     <div class="field"><label>Product URL</label>
-                      <input type="text" id="f-product" placeholder="https://www.yodobashi.com/product/..." />
+                      <input type="text" id="f-product" value="https://www.yodobashi.com/product/100000001003891482/" placeholder="https://www.yodobashi.com/product/..." />
                     </div>
                     <div class="field" id="sale-row"><label>Sale time (JST)</label>
                       <input type="text" id="f-sale" value="09:30:00" />
                     </div>
-                    <button class="btn btn-primary btn-full" onclick="startJob()">▶ Start job</button>
+                    <button class="btn btn-primary btn-full" onclick="startJob(false)">▶ Start job</button>
+                    <button class="btn btn-full" style="margin-top:6px;background:linear-gradient(180deg,#f59e0b,#d97706);border-color:#b45309;color:#fff" onclick="startJob(true)">⚡ Test run (now)</button>
+                    <p class="mono" style="margin-top:6px;font-size:10px">Test uses product 100000001003891482 — login + cart + checkout now</p>
                   </div>
                 </div>
 
-                <div class="panel" style="flex:1">
+                <div class="panel panel-grow">
                   <div class="panel-title">Job detail</div>
-                  <div class="panel-body">
+                  <div class="panel-body panel-body-tight">
                     <div id="detail-meta" class="mono" style="margin-bottom:8px">Select a job</div>
                     <div style="display:flex;gap:4px;margin-bottom:8px">
                       <button id="detail-cancel" class="btn btn-danger btn-sm hidden" onclick="cancelJob(selectedId)">Stop</button>
@@ -324,7 +453,7 @@
           </div>
 
           <!-- PROFILES -->
-          <div id="view-profiles" class="hidden">
+          <div id="view-profiles" class="view-pane hidden">
             <div class="profile-split">
               <div class="panel">
                 <div class="panel-title">Accounts</div>
@@ -366,7 +495,7 @@
               </div>
             </div>
 
-            <div class="panel" style="margin-top:10px">
+            <div class="panel panel-discord">
               <div class="panel-title">Discord webhook</div>
               <div class="grid-wrap">
                 <table class="data-grid">
@@ -386,6 +515,7 @@
                 <div style="display:flex;gap:6px;flex-wrap:wrap">
                   <button class="btn btn-primary btn-sm" onclick="saveDiscord()">Save</button>
                   <button class="btn btn-sm" onclick="testDiscord()">Test</button>
+                  <button class="btn btn-sm" onclick="testLogin()">Test login</button>
                   <button class="btn btn-danger btn-sm" onclick="clearDiscord()">Delete custom</button>
                 </div>
               </div>
@@ -399,6 +529,8 @@
   <script>
     const API = '';
     const PROFILES_KEY = 'yodo_profiles';
+    const DEFAULT_TEST_PRODUCT =
+      'https://www.yodobashi.com/product/100000001003891482/';
     let token = localStorage.getItem('api_token') || '';
     let selectedId = null;
     let timer = null;
@@ -554,6 +686,32 @@
       document.getElementById('p-discord-url').value = '';
     }
 
+    async function testLogin() {
+      const account = getAccount(document.getElementById('f-account').value);
+      const proxy = getProxy(document.getElementById('f-proxy').value);
+      if (!account) return alert('Select an account on Jobs tab first, or add in Profiles');
+      if (!proxy) return alert('Select a proxy on Jobs tab first');
+      try {
+        const res = await fetch(API + '/login/test', {
+          method: 'POST',
+          headers: headers(true),
+          body: JSON.stringify({
+            accountEmail: account.email,
+            accountPassword: account.password,
+            proxy: proxy.value,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        const lines = (data.logs || []).map(l =>
+          `[${(l.timestamp||'').slice(11,19)}] ${l.message}`).join('\n');
+        if (res.ok) {
+          alert('Login OK\n\n' + lines);
+        } else {
+          alert('Login FAILED\n\n' + (data.error || '') + '\n\n' + lines);
+        }
+      } catch (e) { alert(e.message); }
+    }
+
     async function testDiscord() {
       const url = document.getElementById('p-discord-url').value.trim() || getDiscordWebhookUrl();
       if (!url) return alert('No webhook URL to test');
@@ -698,7 +856,7 @@
           tbody.innerHTML = jobs.map(j => `
             <tr class="clickable ${j.id===selectedId?'selected':''}" onclick="selectJob('${j.id}')">
               <td><span class="${stClass(j.status)}">${j.status}</span></td>
-              <td>${j.mode}</td>
+              <td>${j.testMode ? j.mode + ' ⚡' : j.mode}</td>
               <td>${esc((j.accountEmail||'').split('@')[0])}</td>
               <td title="${esc(j.productUrls[0]||'')}">${shortUrl(j.productUrls[0]||'')}</td>
               <td>${j.saleTime||'—'}</td>
@@ -728,8 +886,11 @@
         const job = await api('/jobs/' + id);
         const r = job.result;
         document.getElementById('detail-meta').innerHTML =
+          (job.status === 'failed' && r && !r.success
+            ? `<div class="error-banner"><b>${esc(r.errorCategory || 'failed')}</b><br>${esc(r.errorMessage || '')}</div>`
+            : '') +
           `<b>${job.status}</b> · ${job.mode}<br>${esc(job.accountEmail)}<br>${job.id}` +
-          (r ? `<br>${r.success ? '✓ '+esc(r.orderId||'OK') : '✗ '+esc(r.errorCategory||'')}` : '');
+          (r && r.success ? `<br>✓ ${esc(r.orderId||'OK')}` : '');
         document.getElementById('detail-cancel').classList.toggle('hidden', !['pending','pre_login','waiting','running'].includes(job.status));
         document.getElementById('detail-delete').classList.remove('hidden');
         const logs = document.getElementById('detail-logs');
@@ -743,21 +904,27 @@
       }
     }
 
-    async function startJob() {
+    async function startJob(testMode) {
       const account = getAccount(document.getElementById('f-account').value);
       const proxy = getProxy(document.getElementById('f-proxy').value);
       if (!account) return alert('Select an account');
       if (!proxy) return alert('Select a proxy');
       const mode = document.getElementById('f-mode').value;
-      const productUrl = document.getElementById('f-product').value.trim();
+      const productUrl = testMode
+        ? DEFAULT_TEST_PRODUCT
+        : document.getElementById('f-product').value.trim();
       if (!productUrl) return alert('Product URL required');
       const body = { mode, productUrl, accountEmail: account.email, accountPassword: account.password, proxy: proxy.value };
+      if (testMode) body.testMode = true;
       const discordUrl = getDiscordWebhookUrl();
       if (discordUrl) body.discordWebhookUrl = discordUrl;
-      if (mode === 'normal') body.saleTime = document.getElementById('f-sale').value.trim() || '09:30:00';
+      if (mode === 'normal' && !testMode) body.saleTime = document.getElementById('f-sale').value.trim() || '09:30:00';
       if (mode === 'monitor') body.productUrls = [productUrl];
-      try { await api('/jobs', { method: 'POST', body: JSON.stringify(body) }); refresh(); }
-      catch (e) { alert(e.message); }
+      try {
+        const res = await api('/jobs', { method: 'POST', body: JSON.stringify(body) });
+        if (res.id) selectJob(res.id);
+        refresh();
+      } catch (e) { alert(e.message); }
     }
 
     async function cancelJob(id) {

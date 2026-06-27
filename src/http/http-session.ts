@@ -93,10 +93,17 @@ export class HttpSession {
     url: string,
     init: { method?: string; headers?: Record<string, string>; body?: string } = {},
   ): Promise<HttpResponse> {
-    const headers = { ...this.navigationHeaders(), ...init.headers };
-    await this.applyCookies(url, headers);
+    let requestUrl: string;
+    try {
+      requestUrl = new URL(url.trim()).href;
+    } catch {
+      throw new Error(`Invalid URL: ${url.slice(0, 120)}`);
+    }
 
-    const res = await fetch(url, {
+    const headers = { ...this.navigationHeaders(), ...init.headers };
+    await this.applyCookies(requestUrl, headers);
+
+    const res = await fetch(requestUrl, {
       method: init.method ?? 'GET',
       headers,
       body: init.body,
@@ -106,7 +113,7 @@ export class HttpSession {
     });
 
     const text = await res.text();
-    const finalUrl = res.url || url;
+    const finalUrl = res.url || requestUrl;
     await this.storeCookies(finalUrl, res.headers);
 
     return { status: res.status, data: text, url: finalUrl, headers: res.headers };

@@ -29,6 +29,8 @@ export interface Job {
   logs: JobLogEntry[];
   result?: JobResult;
   cancelRequested: boolean;
+  /** Run immediately — skip sale/pre-login waits */
+  testMode?: boolean;
 }
 
 export interface StartJobRequest {
@@ -38,6 +40,8 @@ export interface StartJobRequest {
   productCode?: string;
   saleTime?: string;
   accountIndex?: number;
+  /** Skip all timing waits; login + checkout now */
+  testMode?: boolean;
   /** Override .env account for this job */
   accountEmail?: string;
   accountPassword?: string;

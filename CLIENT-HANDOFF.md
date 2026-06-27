@@ -127,14 +127,14 @@ Run these **before the real sale**:
 
 ## 5. Always-on deployment
 
-### Option A — PM2 (recommended)
+### Option A — PM2 on Linux (recommended)
 
 ```bash
 npm install -g pm2
 npm run build
 pm2 start ecosystem.config.cjs
 pm2 save
-pm2 startup    # follow printed command for boot on restart
+pm2 startup    # Linux only — follow printed command, then pm2 save again
 ```
 
 Commands:
@@ -146,7 +146,86 @@ pm2 restart yodobashi-checkout
 pm2 stop yodobashi-checkout
 ```
 
-### Option B — systemd
+### Option A2 — PM2 on Windows VPS
+
+`pm2 startup` **does not work on Windows** (`Init system not found`). That is normal.
+
+**Run the app (manual start — works fine):**
+
+```powershell
+cd C:\path\to\yodobashi-checkout
+npm install
+npx playwright install chromium
+npm run build
+npm install -g pm2
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 status
+```
+
+Or use the helper script:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup-pm2-windows.ps1
+```
+
+**Auto-start after Windows reboot** (pick one):
+
+**1) pm2-windows-startup** (easiest with PM2)
+
+```powershell
+# Run PowerShell as Administrator
+npm install -g pm2 pm2-windows-startup
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2-startup install
+pm2 save
+```
+
+Reboot and check: `pm2 status`
+
+**2) Windows Task Scheduler** (no extra npm package)
+
+1. Open **Task Scheduler** → Create Task
+2. Trigger: **At startup**
+3. Action: **Start a program**
+   - Program: `C:\Program Files\nodejs\npm.cmd` (or full path to `pm2.cmd`)
+   - Arguments: `start C:\path\to\yodobashi-checkout\ecosystem.config.cjs`
+   - Start in: `C:\path\to\yodobashi-checkout`
+4. Or run: `pm2 resurrect` if you already ran `pm2 save`
+
+**3) NSSM** (Windows service — most reliable)
+
+Download [NSSM](https://nssm.cc/), then:
+
+```powershell
+nssm install YodobashiCheckout "C:\Program Files\nodejs\node.exe" "C:\path\to\yodobashi-checkout\dist\index.js"
+nssm set YodobashiCheckout AppDirectory C:\path\to\yodobashi-checkout
+nssm start YodobashiCheckout
+```
+
+**Windows firewall:** allow inbound TCP on your `PORT` (e.g. 3004) if you access the dashboard remotely.
+
+**PM2 shows `stopped` with high ↺ restarts:** the app is crash-looping. In **cmd**:
+
+```cmd
+cd C:\path\to\yodobashi-checkout
+node dist\index.js
+```
+
+Fix whatever error prints (common: missing `.env`, `API_TOKEN`, `npm run build`, or port in use). Then:
+
+```cmd
+pm2 delete yodobashi-checkout
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 logs yodobashi-checkout
+```
+
+**PowerShell blocks npm:** use **cmd.exe**, or run `Set-ExecutionPolicy -Scope Process Bypass` first.
+
+### Option B — systemd (Linux only)
 
 ```bash
 sudo cp deploy/yodobashi-checkout.service /etc/systemd/system/
@@ -197,13 +276,59 @@ Discord webhook
 
 ## 8. Troubleshooting
 
+### Login fails (most common on Windows VPS)
+
+1. Run **login-only test** (shows each step in console):
+
+   ```cmd
+   test-login.bat
+   REM or: npm run test:login
+   ```
+
+2. Or from dashboard: **Profiles** → **Test login** (uses selected account/proxy from Jobs tab)
+
+3. Or API:
+
+   ```bash
+   curl -X POST http://localhost:3004/login/test \
+     -H "Authorization: Bearer $API_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"accountEmail":"...","accountPassword":"...","proxy":"host:port:user:pass"}'
+   ```
+
+4. If browser login fails, set in `.env`:
+
+   ```
+   HEADLESS=false
+   BROWSER_USE_PROXY=true
+   HTTP_USE_PROXY=false
+   ```
+
+   Re-run test and watch the browser window.
+
+5. Failed jobs now send **last 15 log lines to Discord** — check the Discord embed "Logs" field.
+
+6. Click the **failed job** in the dashboard — red error banner + full logs in Job detail.
+
 | Problem | Fix |
 |---------|-----|
 | Connectivity test fails | Check Japan proxy; set `HTTP_USE_PROXY=false` |
-| Login fails in job | Verify proxy + account; run `npx tsx scripts/test-browser-yodo.ts` |
+| Login fails in job | Run `test-login.bat`; verify proxy + credentials |
+| Logs empty / job gone | Server restarted — jobs are in RAM only; use Test login |
+| PM2 stopped / high restarts | Run `node dist\index.js` in cmd to see error |
 | Cancel doesn't work | Hard refresh dashboard (`Ctrl+Shift+R`) |
-| Port in use | `fuser PORT/tcp` then kill process or change `PORT` |
-| Payment declined | Add saved card on Yodobashi or set `SECURITY_CODE` |
+| Port in use | Change `PORT` in `.env` |
+| Payment declined | Saved card on Yodobashi or `SECURITY_CODE` |
+
+### Windows easy install (zip delivery)
+
+```cmd
+install-windows.bat    REM npm install + playwright + build
+test-login.bat         REM verify login before sale
+start-windows.bat      REM run server
+```
+
+**Note:** A single `.exe` is not recommended — browser automation needs Chromium (`playwright install`). Zip + batch files is the supported Windows delivery.
 
 ---
 

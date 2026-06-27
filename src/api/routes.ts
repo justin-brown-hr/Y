@@ -5,6 +5,9 @@ import type { AppConfig } from '../config.js';
 import type { JobManager } from '../jobs/job-manager.js';
 import type { Job, StartJobRequest } from '../jobs/types.js';
 import { DiscordReporter } from '../services/discord.js';
+import { parseProxyEntry } from '../config.js';
+import { HttpSession } from '../http/http-session.js';
+import { YodobashiHttpCheckout } from '../http/checkout.js';
 
 function unauthorized(reply: FastifyReply): FastifyReply {
   return reply.code(401).send({ error: 'Unauthorized' });
@@ -91,6 +94,46 @@ export function registerRoutes(app: FastifyInstance, jobs: JobManager, config: A
     }
   });
 
+  app.post<{
+    Body: { accountEmail?: string; accountPassword?: string; proxy?: string };
+  }>('/login/test', auth, async (request, reply) => {
+    const email = request.body?.accountEmail?.trim() ?? config.accounts[0]?.email;
+    const password = request.body?.accountPassword ?? config.accounts[0]?.password;
+    const proxyRaw = request.body?.proxy?.trim();
+
+    if (!email || !password) {
+      return reply.code(400).send({ error: 'accountEmail and accountPassword required' });
+    }
+
+    let proxy;
+    try {
+      proxy = proxyRaw ? parseProxyEntry(proxyRaw) : config.proxies[0];
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: message });
+    }
+
+    const session = new HttpSession(proxy, config.navigationTimeoutMs, config.httpUseProxy);
+    const checkout = new YodobashiHttpCheckout(config);
+    const logs: Array<{ timestamp: string; level: string; message: string }> = [];
+    const log = (message: string) => {
+      logs.push({ timestamp: new Date().toISOString(), level: 'info', message });
+    };
+
+    try {
+      await checkout.login(session, { email, password }, proxy, log);
+      return { success: true, logs };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logs.push({ timestamp: new Date().toISOString(), level: 'error', message });
+      return reply.code(400).send({
+        success: false,
+        error: message,
+        logs,
+      });
+    }
+  });
+
   app.post<{ Body: StartJobRequest & { allAccounts?: boolean } }>(
     '/jobs',
     auth,
@@ -158,6 +201,7 @@ function toSummary(job: Job) {
     accountEmail: job.accountEmail,
     saleTime: job.saleTime,
     proxyHost: job.proxyHost,
+    testMode: job.testMode,
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     completedAt: job.completedAt,

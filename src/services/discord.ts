@@ -12,6 +12,8 @@ export interface WebhookPayload {
   durationMs: number;
   proxy?: string;
   timestamp: string;
+  /** Last job log lines (failures only) */
+  logTail?: string;
 }
 
 export class DiscordReporter {
@@ -46,6 +48,9 @@ export class DiscordReporter {
     }
     if (payload.errorMessage) {
       fields.push({ name: 'Error', value: payload.errorMessage.slice(0, 1000), inline: false });
+    }
+    if (payload.logTail) {
+      fields.push({ name: 'Logs', value: payload.logTail.slice(0, 1000), inline: false });
     }
 
     const body = {

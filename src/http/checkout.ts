@@ -7,6 +7,7 @@ import { parseProductHtml, productUrls, buildAddCartPayload, type ProductFields 
 import { fetchProductHtmlWithBrowser } from './login-browser.js';
 import type { Account, AppConfig, ProxyConfig } from '../config.js';
 import { CheckoutError } from '../utils/errors.js';
+import { resolveYodobashiUrl, normalizeProductUrl } from './url-utils.js';
 
 export interface HttpCheckoutResult {
   success: boolean;
@@ -97,8 +98,17 @@ export class YodobashiHttpCheckout {
       await loginWithRealBrowser(session, account, proxy, this.config, log);
     } catch (browserErr) {
       const msg = browserErr instanceof Error ? browserErr.message.split('\n')[0] : String(browserErr);
-      log(`Browser login failed (${msg}) — trying HTTP login`);
-      await loginWithHttp(session, account, log);
+      const category =
+        browserErr instanceof CheckoutError ? browserErr.category : 'login_failed';
+      log(`Browser login failed [${category}]: ${msg}`);
+      log('Fallback: trying HTTP login');
+      try {
+        await loginWithHttp(session, account, log);
+      } catch (httpErr) {
+        const httpMsg = httpErr instanceof Error ? httpErr.message.split('\n')[0] : String(httpErr);
+        log(`HTTP login also failed: ${httpMsg}`);
+        throw browserErr instanceof CheckoutError ? browserErr : httpErr;
+      }
     }
 
     log('callMemberIndex');
@@ -120,12 +130,28 @@ export class YodobashiHttpCheckout {
       .get()
       .filter(Boolean) as string[];
 
-    for (const href of deleteLinks.slice(0, 20)) {
-      const url = href.startsWith('http') ? href : `${BASE_ORDER}${href}`;
-      await session.get(url, API.cartClear);
+    if (deleteLinks.length === 0) {
+      log('Cart empty — nothing to delete');
+      return;
     }
 
-    log('Cart cleared');
+    let removed = 0;
+    for (const href of deleteLinks.slice(0, 20)) {
+      const url = resolveYodobashiUrl(href, BASE_ORDER);
+      if (!url) {
+        log(`clearCart skip invalid link: ${href.slice(0, 80)}`);
+        continue;
+      }
+      try {
+        await session.get(url, API.cartClear);
+        removed += 1;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
+        log(`clearCart delete warning: ${msg}`);
+      }
+    }
+
+    log(`Cart cleared (${removed} item(s) removed)`);
   }
 
   async checkProductAvailable(
@@ -150,8 +176,10 @@ export class YodobashiHttpCheckout {
     log: (msg: string) => void,
   ): Promise<HttpCheckoutResult> {
     const start = Date.now();
+    const url = normalizeProductUrl(productUrl);
 
-    const product = await this.loadProduct(session, productUrl, proxy, log);
+    log(`loadProduct ${url}`);
+    const product = await this.loadProduct(session, url, proxy, log);
     if (!product.inStock) {
       throw new CheckoutError('Product out of stock', 'out_of_stock', true);
     }

@@ -84,7 +84,7 @@ export function loadConfig(): AppConfig {
 }
 
 export function productUrlFromInput(input: string): string {
-  const trimmed = input.trim();
+  const trimmed = input.trim().replace(/\s+/g, '');
   if (trimmed.startsWith('http')) return trimmed;
   const code = trimmed.replace(/\D/g, '');
   if (!code) throw new Error('Invalid product URL or product code');

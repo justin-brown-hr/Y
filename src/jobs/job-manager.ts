@@ -163,7 +163,12 @@ export class JobManager {
       createdAt: now(),
       logs: [],
       cancelRequested: false,
+      testMode: req.testMode ?? false,
     };
+
+    if (job.testMode) {
+      job.logs.push({ timestamp: now(), level: 'info', message: 'Test mode — no sale-time waits' });
+    }
 
     this.jobs.set(job.id, job);
     this.jobContext.set(job.id, ctx);
@@ -236,7 +241,7 @@ export class JobManager {
       if (job.cancelRequested) return;
       job.status = 'pre_login';
       job.startedAt = now();
-      this.log(job, 'info', `Starting HTTP job (mode=${job.mode}, account=${job.accountEmail})`);
+      this.log(job, 'info', `Starting HTTP job (mode=${job.mode}, account=${job.accountEmail}${job.testMode ? ', TEST' : ''})`);
 
       let lastError: unknown;
       for (let attempt = 0; attempt < maxProxyAttempts; attempt++) {
@@ -287,7 +292,7 @@ export class JobManager {
     proxy: ReturnType<ProxyPool['at']>,
     signal: AbortSignal,
   ): Promise<void> {
-    const saleAt = job.saleTime ? parseJstSaleTime(job.saleTime) : null;
+    const saleAt = job.testMode ? null : job.saleTime ? parseJstSaleTime(job.saleTime) : null;
 
     if (saleAt) {
       const preLoginMs = randomPreLoginMs(
@@ -324,7 +329,7 @@ export class JobManager {
     proxy: ReturnType<ProxyPool['at']>,
     signal: AbortSignal,
   ): Promise<void> {
-    const saleAt = job.saleTime ? parseJstSaleTime(job.saleTime) : null;
+    const saleAt = job.testMode ? null : job.saleTime ? parseJstSaleTime(job.saleTime) : null;
     if (saleAt) {
       const waitMs = saleAt.getTime() - Date.now();
       if (waitMs > 0) {
@@ -355,6 +360,17 @@ export class JobManager {
     signal: AbortSignal,
   ): Promise<void> {
     job.status = 'running';
+
+    if (job.testMode) {
+      const url = job.productUrls[0];
+      this.log(job, 'info', `Test mode: checkout now (${url})`);
+      const outcome = await this.httpCheckout.checkout(session, account, url, proxy, (msg) =>
+        this.log(job, 'info', msg),
+      );
+      await this.completeJobSuccess(job, url, outcome.orderId, outcome.durationMs, proxy);
+      return;
+    }
+
     let attempts = 0;
     const maxAttempts = 3600;
 
@@ -421,6 +437,11 @@ export class JobManager {
     job.result = { success: false, errorCategory: category, errorMessage: message };
     this.log(job, 'error', message);
 
+    const logTail = job.logs
+      .slice(-15)
+      .map((l) => `[${l.timestamp.slice(11, 19)}] ${l.message}`)
+      .join('\n');
+
     await this.discordForJob(job.id)
       .report({
         success: false,
@@ -430,6 +451,7 @@ export class JobManager {
         productUrl: job.productUrls[0] ?? '',
         errorCategory: category,
         errorMessage: message,
+        logTail: logTail || undefined,
         durationMs: Date.now() - new Date(job.startedAt ?? job.createdAt).getTime(),
         proxy: proxy ? `${proxy.host}:${proxy.port}` : undefined,
         timestamp: now(),
@@ -508,7 +530,7 @@ export class JobManager {
     session: Awaited<ReturnType<BrowserPool['createSession']>>,
     signal: AbortSignal,
   ): Promise<void> {
-    const saleAt = job.saleTime ? parseJstSaleTime(job.saleTime) : null;
+    const saleAt = job.testMode ? null : job.saleTime ? parseJstSaleTime(job.saleTime) : null;
 
     if (saleAt) {
       const preLoginMs = randomPreLoginMs(
@@ -548,7 +570,7 @@ export class JobManager {
     hasSavedCard: boolean,
     signal: AbortSignal,
   ): Promise<void> {
-    const saleAt = job.saleTime ? parseJstSaleTime(job.saleTime) : null;
+    const saleAt = job.testMode ? null : job.saleTime ? parseJstSaleTime(job.saleTime) : null;
 
     if (saleAt) {
       const waitMs = saleAt.getTime() - Date.now();
@@ -602,6 +624,14 @@ export class JobManager {
     signal: AbortSignal,
   ): Promise<void> {
     job.status = 'running';
+
+    if (job.testMode) {
+      const url = job.productUrls[0];
+      this.log(job, 'info', `Test mode: checkout now (${url})`);
+      await this.completeCheckout(job, session, url, hasSavedCard);
+      return;
+    }
+
     const { page } = session;
     const maxAttempts = 3600;
     let attempts = 0;
