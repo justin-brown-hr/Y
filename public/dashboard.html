@@ -127,6 +127,9 @@
       display: flex;
       flex-direction: column;
     }
+    #view-profiles {
+      overflow-y: auto;
+    }
     /* Stats bar */
     .stats-bar {
       flex-shrink: 0;
@@ -313,6 +316,16 @@
     .panel-discord .form-box {
       overflow-y: auto;
     }
+    .panel-schedules {
+      flex-shrink: 0;
+      margin-top: 10px;
+      max-height: 42vh;
+    }
+    textarea {
+      width: 100%; font-size: 12px; padding: 4px 6px;
+      border: 1px solid var(--border); border-radius: 2px;
+      font-family: Consolas, monospace; resize: vertical;
+    }
     .form-box {
       flex-shrink: 0;
       margin: 10px; padding: 10px;
@@ -420,16 +433,28 @@
                     <div class="field"><label>Account</label><select id="f-account"><option value="">Select…</option></select></div>
                     <div class="field"><label>Proxy</label><select id="f-proxy"><option value="">Select…</option></select></div>
                     <div class="field"><label>Mode</label>
-                      <select id="f-mode">
+                      <select id="f-mode" onchange="onModeChange()">
                         <option value="normal">Normal</option>
                         <option value="monitor">Monitor</option>
                       </select>
                     </div>
-                    <div class="field"><label>Product URL</label>
+                    <div class="field" id="product-row"><label id="product-label">Product URL</label>
                       <input type="text" id="f-product" value="https://www.yodobashi.com/product/100000001003891482/" placeholder="https://www.yodobashi.com/product/..." />
+                    </div>
+                    <div class="field hidden" id="products-multi-row"><label>Product URLs (one per line, monitor only)</label>
+                      <textarea id="f-products-multi" rows="3" placeholder="https://www.yodobashi.com/product/...&#10;https://www.yodobashi.com/product/..."></textarea>
+                    </div>
+                    <div class="field" id="login-row"><label>Login time (JST)</label>
+                      <input type="text" id="f-login" value="09:25:00" placeholder="09:25:00 — leave empty for random 5–10 min before sale" />
                     </div>
                     <div class="field" id="sale-row"><label>Sale time (JST)</label>
                       <input type="text" id="f-sale" value="09:30:00" />
+                    </div>
+                    <div class="field hidden" id="poll-row"><label>Scan interval (ms, monitor)</label>
+                      <input type="number" id="f-poll" min="200" step="100" placeholder="500 — from .env if empty" />
+                    </div>
+                    <div class="field"><label>CVV (optional, per account)</label>
+                      <input type="password" id="f-cvv" maxlength="4" placeholder="3–4 digits if card saved on Yodobashi" />
                     </div>
                     <button class="btn btn-primary btn-full" onclick="startJob(false)">▶ Start job</button>
                     <button class="btn btn-full" style="margin-top:6px;background:linear-gradient(180deg,#f59e0b,#d97706);border-color:#b45309;color:#fff" onclick="startJob(true)">⚡ Test run (now)</button>
@@ -470,6 +495,10 @@
                   <div class="field"><label>Label</label><input type="text" id="p-acc-name" placeholder="Optional" /></div>
                   <div class="field"><label>Email</label><input type="email" id="p-acc-email" /></div>
                   <div class="field"><label>Password</label><input type="password" id="p-acc-password" /></div>
+                  <div class="field"><label>CVV (card security code)</label>
+                    <input type="password" id="p-acc-cvv" maxlength="4" placeholder="Required at checkout if card saved on Yodobashi" />
+                  </div>
+                  <p class="mono" style="margin-bottom:8px;font-size:10px">Card number must be saved on the Yodobashi website first. CVV is entered here for checkout.</p>
                   <button class="btn btn-primary btn-sm" onclick="addAccount()">Add</button>
                 </div>
               </div>
@@ -520,6 +549,46 @@
                 </div>
               </div>
             </div>
+
+            <div class="panel panel-schedules">
+              <div class="panel-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+                <span>Sale schedules (CSV import)</span>
+                <label style="font-weight:normal;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:4px">
+                  <input type="checkbox" id="scheduler-armed" checked onchange="toggleScheduler()" /> Scheduler armed
+                </label>
+              </div>
+              <p class="mono" style="padding:0 10px 8px;font-size:10px">
+                Import docs/profile.csv — each row = one account with login time, sale time, mode, and products.
+                Use delay_min to stagger logins. Uncheck enabled to skip a row.
+              </p>
+              <div class="grid-wrap" style="max-height:160px">
+                <table class="data-grid">
+                  <thead>
+                    <tr>
+                      <th>On</th><th>Name</th><th>Mode</th><th>Login</th><th>Sale</th><th>Products</th><th style="width:72px">Del</th>
+                    </tr>
+                  </thead>
+                  <tbody id="schedules-table"></tbody>
+                </table>
+              </div>
+              <div class="form-box">
+                <div class="form-box-title">Import CSV</div>
+                <div class="field">
+                  <label>Paste CSV or load file</label>
+                  <textarea id="csv-input" rows="4" placeholder="profileName,email,password,proxy,cvv,mode,product,delay_min,login_time,sale_time,monitor_poll_ms,enabled"></textarea>
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                  <input type="file" id="csv-file" accept=".csv,text/csv" style="font-size:11px" />
+                  <button class="btn btn-sm" onclick="loadCsvFile()">Load file</button>
+                  <button class="btn btn-primary btn-sm" onclick="importCsv()">Import rows</button>
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  <button class="btn btn-primary btn-sm" onclick="startEnabledSchedules(false)">▶ Start enabled schedules</button>
+                  <button class="btn btn-sm" style="background:#f59e0b;border-color:#b45309;color:#fff" onclick="startEnabledSchedules(true)">⚡ Test enabled (now)</button>
+                  <button class="btn btn-danger btn-sm" onclick="stopAllJobs()">Stop all running</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -562,8 +631,11 @@
 
     function loadCustom() {
       try {
-        return JSON.parse(localStorage.getItem(PROFILES_KEY) || '{"accounts":[],"proxies":[]}');
-      } catch { return { accounts: [], proxies: [] }; }
+        const data = JSON.parse(localStorage.getItem(PROFILES_KEY) || '{"accounts":[],"proxies":[],"schedules":[]}');
+        if (!data.schedules) data.schedules = [];
+        if (data.schedulerEnabled === undefined) data.schedulerEnabled = true;
+        return data;
+      } catch { return { accounts: [], proxies: [], schedules: [], schedulerEnabled: true }; }
     }
 
     function saveCustom(data) {
@@ -663,6 +735,171 @@
 
       const active = getDiscordWebhookUrl();
       document.getElementById('p-discord-url').value = loadCustom().discordWebhookUrl || '';
+      renderSchedules();
+    }
+
+    function renderSchedules() {
+      const data = loadCustom();
+      const tbody = document.getElementById('schedules-table');
+      const armed = document.getElementById('scheduler-armed');
+      if (armed) armed.checked = data.schedulerEnabled !== false;
+
+      if (!data.schedules.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty" style="padding:12px">No schedules — import CSV below</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = data.schedules.map(s => `<tr>
+        <td><input type="checkbox" ${s.enabled !== false ? 'checked' : ''} onchange="toggleSchedule('${s.id}', this.checked)" /></td>
+        <td>${esc(s.name)}</td>
+        <td>${esc(s.mode)}</td>
+        <td>${esc(s.loginTime || '—')}</td>
+        <td>${esc(s.saleTime || '—')}</td>
+        <td title="${esc((s.products || []).join('\n'))}">${(s.products || []).length} link(s)</td>
+        <td><button class="btn btn-danger btn-sm btn-icon" onclick="removeSchedule('${s.id}')">Delete</button></td>
+      </tr>`).join('');
+    }
+
+    function toggleScheduler() {
+      const data = loadCustom();
+      data.schedulerEnabled = document.getElementById('scheduler-armed').checked;
+      saveCustom(data);
+    }
+
+    function toggleSchedule(id, enabled) {
+      const data = loadCustom();
+      const row = data.schedules.find(s => s.id === id);
+      if (row) row.enabled = enabled;
+      saveCustom(data);
+    }
+
+    function removeSchedule(id) {
+      if (!confirm('Remove this schedule row?')) return;
+      const data = loadCustom();
+      data.schedules = data.schedules.filter(s => s.id !== id);
+      saveCustom(data);
+    }
+
+    async function importCsv() {
+      const csv = document.getElementById('csv-input').value.trim();
+      if (!csv) return alert('Paste CSV text first');
+      try {
+        const { rows } = await api('/profiles/parse-csv', { method: 'POST', body: JSON.stringify({ csv }) });
+        if (!rows.length) return alert('No valid rows found');
+        const data = loadCustom();
+        for (const r of rows) {
+          data.schedules.push({
+            id: uid(),
+            enabled: r.enabled !== false,
+            name: r.name,
+            email: r.email,
+            password: r.password,
+            proxy: r.proxy || '',
+            cvv: r.cvv || '',
+            mode: r.mode,
+            products: r.products || [],
+            loginDelayMinutes: r.loginDelayMinutes,
+            loginTime: r.loginTime,
+            saleTime: r.saleTime,
+            monitorPollIntervalMs: r.monitorPollIntervalMs,
+          });
+        }
+        saveCustom(data);
+        alert(`Imported ${rows.length} schedule row(s)`);
+      } catch (e) { alert(e.message); }
+    }
+
+    function loadCsvFile() {
+      const input = document.getElementById('csv-file');
+      const file = input.files?.[0];
+      if (!file) return alert('Choose a .csv file');
+      const reader = new FileReader();
+      reader.onload = () => {
+        document.getElementById('csv-input').value = String(reader.result || '');
+      };
+      reader.readAsText(file);
+    }
+
+    function resolveScheduleProxy(s, index) {
+      if (s.proxy?.trim()) return s.proxy.trim();
+      const proxies = allProxies();
+      const px = proxies[index] ?? proxies[index % Math.max(proxies.length, 1)];
+      if (!px?.value) {
+        throw new Error(`Schedule "${s.name}" missing proxy — fill proxy column or add PROXIES in .env`);
+      }
+      return px.value;
+    }
+
+    function scheduleToJobBody(s, testMode, staggerIndex) {
+      if (!s.email || !s.password) throw new Error(`Schedule "${s.name}" missing email/password`);
+      const proxy = resolveScheduleProxy(s, staggerIndex);
+      const products = (s.products || []).filter(Boolean);
+      if (!products.length && !testMode) {
+        throw new Error(`Schedule "${s.name}" needs at least one product URL`);
+      }
+      const body = {
+        mode: s.mode,
+        accountEmail: s.email,
+        accountPassword: s.password,
+        proxy,
+        saleTime: s.saleTime || '09:30:00',
+      };
+      if (s.loginTime) body.loginTime = s.loginTime;
+      if (s.cvv) body.securityCode = s.cvv;
+      if (s.monitorPollIntervalMs) body.monitorPollIntervalMs = s.monitorPollIntervalMs;
+      const staggerMin = Number(s.loginDelayMinutes);
+      if (!Number.isNaN(staggerMin) && staggerMin > 0 && staggerIndex > 0) {
+        body.loginDelaySec = Math.round(staggerMin * 60 * staggerIndex);
+      }
+      const discordUrl = getDiscordWebhookUrl();
+      if (discordUrl) body.discordWebhookUrl = discordUrl;
+      if (testMode) {
+        body.testMode = true;
+        body.productUrl = DEFAULT_TEST_PRODUCT;
+        if (s.mode === 'monitor') body.productUrls = [DEFAULT_TEST_PRODUCT];
+      } else if (s.mode === 'monitor') {
+        body.productUrls = products;
+      } else {
+        body.productUrl = products[0];
+      }
+      return body;
+    }
+
+    async function startEnabledSchedules(testMode) {
+      const data = loadCustom();
+      if (!testMode && data.schedulerEnabled === false) {
+        return alert('Scheduler is OFF — check "Scheduler armed" to enable scheduled runs');
+      }
+      const enabled = data.schedules.filter(s => s.enabled !== false);
+      if (!enabled.length) return alert('No enabled schedule rows');
+      try {
+        const jobs = enabled.map((s, i) => scheduleToJobBody(s, testMode, i));
+        const res = await api('/jobs/bulk', { method: 'POST', body: JSON.stringify({ jobs }) });
+        alert(`Started ${res.jobs?.length || 0} job(s)`);
+        showTab('jobs');
+        refresh();
+      } catch (e) { alert(e.message); }
+    }
+
+    async function stopAllJobs() {
+      if (!confirm('Stop all running jobs?')) return;
+      try {
+        const { jobs } = await api('/jobs');
+        const active = jobs.filter(j => ['pending','pre_login','waiting','running'].includes(j.status));
+        for (const j of active) {
+          await api('/jobs/' + j.id + '/cancel', { method: 'POST' });
+        }
+        alert(`Stopped ${active.length} job(s)`);
+        refresh();
+      } catch (e) { alert(e.message); }
+    }
+
+    function onModeChange() {
+      const mode = document.getElementById('f-mode').value;
+      document.getElementById('products-multi-row').classList.toggle('hidden', mode !== 'monitor');
+      document.getElementById('poll-row').classList.toggle('hidden', mode !== 'monitor');
+      document.getElementById('product-row').classList.toggle('hidden', mode === 'monitor');
+      document.getElementById('product-label').textContent = mode === 'monitor' ? 'Primary product (optional)' : 'Product URL';
     }
 
     function saveDiscord() {
@@ -749,17 +986,26 @@
       else if (envDefaults.accounts[0]) accSel.value = envDefaults.accounts[0].id;
       if (prevProxy && allProxies().some(p => p.id === prevProxy)) proxySel.value = prevProxy;
       else if (envDefaults.proxies[0]) proxySel.value = envDefaults.proxies[0].id;
+
+      fillCvvFromAccount();
+    }
+
+    function fillCvvFromAccount() {
+      const account = getAccount(document.getElementById('f-account').value);
+      const cvvField = document.getElementById('f-cvv');
+      if (account?.cvv && !cvvField.value) cvvField.value = account.cvv;
     }
 
     function addAccount() {
       const name = document.getElementById('p-acc-name').value.trim();
       const email = document.getElementById('p-acc-email').value.trim();
       const password = document.getElementById('p-acc-password').value;
+      const cvv = document.getElementById('p-acc-cvv').value.trim();
       if (!email || !password) return alert('Email and password required');
       const data = loadCustom();
-      data.accounts.push({ id: uid(), name: name || email.split('@')[0], email, password });
+      data.accounts.push({ id: uid(), name: name || email.split('@')[0], email, password, cvv: cvv || undefined });
       saveCustom(data);
-      ['p-acc-name','p-acc-email','p-acc-password'].forEach(id => document.getElementById(id).value = '');
+      ['p-acc-name','p-acc-email','p-acc-password','p-acc-cvv'].forEach(id => document.getElementById(id).value = '');
     }
 
     function addProxy() {
@@ -800,6 +1046,7 @@
     async function initApp() {
       await loadEnvDefaults();
       populateStartSelects();
+      onModeChange();
       refresh();
       startAutoRefresh();
     }
@@ -910,16 +1157,35 @@
       if (!account) return alert('Select an account');
       if (!proxy) return alert('Select a proxy');
       const mode = document.getElementById('f-mode').value;
-      const productUrl = testMode
+      const cvv = document.getElementById('f-cvv').value.trim() || account.cvv || '';
+      let productUrl = testMode
         ? DEFAULT_TEST_PRODUCT
         : document.getElementById('f-product').value.trim();
-      if (!productUrl) return alert('Product URL required');
-      const body = { mode, productUrl, accountEmail: account.email, accountPassword: account.password, proxy: proxy.value };
+      const multiRaw = document.getElementById('f-products-multi').value.trim();
+      const multiUrls = multiRaw ? multiRaw.split(/\r?\n/).map(s => s.trim()).filter(Boolean) : [];
+      if (mode === 'monitor' && !testMode && multiUrls.length) {
+        productUrl = multiUrls[0];
+      }
+      if (!productUrl && !(mode === 'monitor' && multiUrls.length)) return alert('Product URL required');
+      const body = {
+        mode,
+        productUrl,
+        accountEmail: account.email,
+        accountPassword: account.password,
+        proxy: proxy.value,
+      };
       if (testMode) body.testMode = true;
+      if (cvv) body.securityCode = cvv;
+      const loginTime = document.getElementById('f-login').value.trim();
+      if (loginTime && !testMode) body.loginTime = loginTime;
+      const pollMs = document.getElementById('f-poll').value.trim();
+      if (pollMs && mode === 'monitor') body.monitorPollIntervalMs = Number(pollMs);
       const discordUrl = getDiscordWebhookUrl();
       if (discordUrl) body.discordWebhookUrl = discordUrl;
-      if (mode === 'normal' && !testMode) body.saleTime = document.getElementById('f-sale').value.trim() || '09:30:00';
-      if (mode === 'monitor') body.productUrls = [productUrl];
+      if (!testMode) body.saleTime = document.getElementById('f-sale').value.trim() || '09:30:00';
+      if (mode === 'monitor') {
+        body.productUrls = testMode ? [DEFAULT_TEST_PRODUCT] : (multiUrls.length ? multiUrls : [productUrl]);
+      }
       try {
         const res = await api('/jobs', { method: 'POST', body: JSON.stringify(body) });
         if (res.id) selectJob(res.id);
@@ -947,9 +1213,7 @@
       timer = setInterval(() => { if (document.getElementById('auto-refresh').checked) refresh(); }, 3000);
     }
 
-    document.getElementById('f-mode').addEventListener('change', e => {
-      document.getElementById('sale-row').style.display = e.target.value === 'normal' ? '' : 'none';
-    });
+    document.getElementById('f-account').addEventListener('change', fillCvvFromAccount);
 
     if (token) {
       document.getElementById('auth-screen').classList.add('hidden');

@@ -8,6 +8,7 @@ import { DiscordReporter } from '../services/discord.js';
 import { parseProxyEntry } from '../config.js';
 import { HttpSession } from '../http/http-session.js';
 import { YodobashiHttpCheckout } from '../http/checkout.js';
+import { parseScheduleCsv } from '../profiles/csv-import.js';
 
 function unauthorized(reply: FastifyReply): FastifyReply {
   return reply.code(401).send({ error: 'Unauthorized' });
@@ -39,6 +40,15 @@ export function registerRoutes(app: FastifyInstance, jobs: JobManager, config: A
 
   app.get('/', serveDashboard);
   app.get('/dashboard', serveDashboard);
+
+  app.get('/docs/profile.csv', async (_req, reply) => {
+    try {
+      const csv = readFileSync(join(process.cwd(), 'docs/profile.csv'), 'utf8');
+      return reply.type('text/csv').send(csv);
+    } catch {
+      return reply.code(404).send({ error: 'profile.csv not found' });
+    }
+  });
 
   app.get('/health', async () => ({
     status: 'ok',
@@ -159,6 +169,37 @@ export function registerRoutes(app: FastifyInstance, jobs: JobManager, config: A
     },
   );
 
+  app.post<{ Body: { jobs?: StartJobRequest[] } }>('/jobs/bulk', auth, async (request, reply) => {
+    const list = request.body?.jobs;
+    if (!Array.isArray(list) || list.length === 0) {
+      return reply.code(400).send({ error: 'jobs array is required' });
+    }
+    for (const item of list) {
+      if (!item.mode || !['normal', 'monitor'].includes(item.mode)) {
+        return reply.code(400).send({ error: 'Each job must have mode normal or monitor' });
+      }
+    }
+    try {
+      const started = await jobs.startBulkJobs(list);
+      return reply.code(202).send({ jobs: started.map(toSummary) });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  app.post<{ Body: { csv?: string } }>('/profiles/parse-csv', auth, async (request, reply) => {
+    const csv = request.body?.csv;
+    if (!csv?.trim()) return reply.code(400).send({ error: 'csv text is required' });
+    try {
+      const rows = parseScheduleCsv(csv);
+      return { rows, count: rows.length };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: message });
+    }
+  });
+
   app.get('/jobs', auth, async () => ({
     jobs: jobs.listJobs().map(toSummary),
   }));
@@ -200,6 +241,7 @@ function toSummary(job: Job) {
     productUrls: job.productUrls,
     accountEmail: job.accountEmail,
     saleTime: job.saleTime,
+    loginTime: job.loginTime,
     proxyHost: job.proxyHost,
     testMode: job.testMode,
     createdAt: job.createdAt,

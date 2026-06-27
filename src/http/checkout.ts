@@ -174,9 +174,11 @@ export class YodobashiHttpCheckout {
     productUrl: string,
     proxy: ProxyConfig | undefined,
     log: (msg: string) => void,
+    securityCodeOverride?: string,
   ): Promise<HttpCheckoutResult> {
     const start = Date.now();
     const url = normalizeProductUrl(productUrl);
+    const securityCode = securityCodeOverride ?? this.config.securityCode;
 
     log(`loadProduct ${url}`);
     const product = await this.loadProduct(session, url, proxy, log);
@@ -215,8 +217,8 @@ export class YodobashiHttpCheckout {
       log('getReinputIndex');
       const reinputHtml = String((await session.get(currentUrl, API.orderIndex)).data);
       const reinputFields = parseFormFields(reinputHtml);
-      if (this.config.securityCode) {
-        reinputFields['creditCard.securityCode'] = this.config.securityCode;
+      if (securityCode) {
+        reinputFields['creditCard.securityCode'] = securityCode;
       }
       log('callReinputCredit');
       await session.postForm(API.orderReinputAction, reinputFields, currentUrl);
@@ -250,8 +252,8 @@ export class YodobashiHttpCheckout {
       (await session.get(`${API.orderPayment}${paymentKey}`, confirmUrl)).data,
     );
     const paymentFields = parseFormFields(paymentHtml);
-    if (paymentFields['creditCard.securityCode'] && this.config.securityCode) {
-      paymentFields['creditCard.securityCode'] = this.config.securityCode;
+    if (paymentFields['creditCard.securityCode'] && securityCode) {
+      paymentFields['creditCard.securityCode'] = securityCode;
     }
     await session.postForm(API.orderPaymentAction, paymentFields, `${API.orderPayment}${paymentKey}`);
 

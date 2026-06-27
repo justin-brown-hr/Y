@@ -28,6 +28,26 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+function resolvePreLoginAt(job: Job, saleAt: Date | null, config: AppConfig): Date | null {
+  if (job.testMode || !saleAt) return null;
+
+  let preLoginAt: Date;
+  if (job.loginTime) {
+    preLoginAt = parseJstSaleTime(job.loginTime);
+    if (job.loginDelaySec && job.loginDelaySec > 0) {
+      preLoginAt = new Date(preLoginAt.getTime() + job.loginDelaySec * 1000);
+    }
+  } else {
+    const preLoginMs = randomPreLoginMs(config.preLoginMinMinutes, config.preLoginMaxMinutes);
+    preLoginAt = new Date(saleAt.getTime() - preLoginMs);
+    if (job.loginDelaySec && job.loginDelaySec > 0) {
+      preLoginAt = new Date(preLoginAt.getTime() + job.loginDelaySec * 1000);
+    }
+  }
+
+  return preLoginAt;
+}
+
 export class JobManager {
   private readonly jobs = new Map<string, Job>();
   private readonly jobContext = new Map<string, JobRuntimeContext>();
@@ -116,6 +136,8 @@ export class JobManager {
 
     const discordWebhookUrl =
       req.discordWebhookUrl?.trim() || this.config.discordWebhookUrl || undefined;
+    const securityCode = req.securityCode?.trim() || this.config.securityCode;
+    const monitorPollIntervalMs = req.monitorPollIntervalMs ?? this.config.monitorPollIntervalMs;
 
     if (hasCustom) {
       if (this.config.checkoutEngine === 'browser') {
@@ -132,6 +154,8 @@ export class JobManager {
         account: { email: req.accountEmail.trim(), password: req.accountPassword },
         proxy,
         discordWebhookUrl,
+        securityCode,
+        monitorPollIntervalMs,
       };
     }
 
@@ -139,7 +163,13 @@ export class JobManager {
     if (!account) {
       throw new Error(`No account at index ${accountIndex}. Configure ACCOUNTS env var.`);
     }
-    return { account, proxy: this.proxyPool.at(accountIndex), discordWebhookUrl };
+    return {
+      account,
+      proxy: this.proxyPool.at(accountIndex),
+      discordWebhookUrl,
+      securityCode,
+      monitorPollIntervalMs,
+    };
   }
 
   private discordForJob(jobId: string): DiscordReporter {
@@ -158,16 +188,27 @@ export class JobManager {
       status: 'pending',
       productUrls: this.resolveProductUrls(req),
       saleTime: req.saleTime ?? this.config.defaultSaleTime,
+      loginTime: req.loginTime,
+      loginDelaySec: req.loginDelaySec,
       accountEmail: ctx.account.email,
       proxyHost: ctx.proxy?.host,
       createdAt: now(),
       logs: [],
       cancelRequested: false,
       testMode: req.testMode ?? false,
+      monitorPollIntervalMs: ctx.monitorPollIntervalMs,
     };
 
     if (job.testMode) {
       job.logs.push({ timestamp: now(), level: 'info', message: 'Test mode — no sale-time waits' });
+    } else if (job.loginTime) {
+      const delayNote =
+        job.loginDelaySec && job.loginDelaySec > 0 ? ` (+${job.loginDelaySec}s stagger)` : '';
+      job.logs.push({
+        timestamp: now(),
+        level: 'info',
+        message: `Scheduled login at ${job.loginTime} JST${delayNote}`,
+      });
     }
 
     this.jobs.set(job.id, job);
@@ -186,9 +227,22 @@ export class JobManager {
     if (this.config.accounts.length === 0) {
       throw new Error('No accounts configured');
     }
+    const staggerSec =
+      req.loginStaggerMinutes != null ? Math.round(req.loginStaggerMinutes * 60) : 0;
     return Promise.all(
-      this.config.accounts.map((_, i) => this.startJob({ ...req, accountIndex: i })),
+      this.config.accounts.map((_, i) =>
+        this.startJob({
+          ...req,
+          accountIndex: i,
+          loginDelaySec: staggerSec > 0 ? i * staggerSec : req.loginDelaySec,
+        }),
+      ),
     );
+  }
+
+  async startBulkJobs(requests: StartJobRequest[]): Promise<Job[]> {
+    if (requests.length === 0) throw new Error('No jobs to start');
+    return Promise.all(requests.map((req) => this.startJob(req)));
   }
 
   cancelJob(id: string): boolean {
@@ -293,17 +347,13 @@ export class JobManager {
     signal: AbortSignal,
   ): Promise<void> {
     const saleAt = job.testMode ? null : job.saleTime ? parseJstSaleTime(job.saleTime) : null;
+    const preLoginAt = resolvePreLoginAt(job, saleAt, this.config);
 
-    if (saleAt) {
-      const preLoginMs = randomPreLoginMs(
-        this.config.preLoginMinMinutes,
-        this.config.preLoginMaxMinutes,
-      );
-      const preLoginAt = new Date(saleAt.getTime() - preLoginMs);
+    if (preLoginAt) {
       const waitMs = preLoginAt.getTime() - Date.now();
       if (waitMs > 0) {
         job.status = 'waiting';
-        this.log(job, 'info', `Waiting until pre-login at ${preLoginAt.toISOString()}`);
+        this.log(job, 'info', `Waiting until login at ${preLoginAt.toISOString()} (${job.loginTime ?? 'pre-sale'} JST)`);
         await sleep(waitMs, signal).catch(() => {
           if (job.cancelRequested) throw new Error('cancelled');
         });
@@ -312,13 +362,16 @@ export class JobManager {
 
     if (job.cancelRequested) return;
 
+    const ctx = this.jobContext.get(job.id);
+    const securityCode = ctx?.securityCode;
+
     await this.httpCheckout.login(session, account, proxy, (msg) => this.log(job, 'info', msg));
     await this.httpCheckout.clearCart(session, (msg) => this.log(job, 'info', msg));
 
     if (job.mode === 'normal') {
-      await this.runNormalModeHttp(job, session, account, proxy, signal);
+      await this.runNormalModeHttp(job, session, account, proxy, signal, securityCode);
     } else {
-      await this.runMonitorModeHttp(job, session, account, proxy, signal);
+      await this.runMonitorModeHttp(job, session, account, proxy, signal, securityCode);
     }
   }
 
@@ -328,6 +381,7 @@ export class JobManager {
     account: { email: string; password: string },
     proxy: ReturnType<ProxyPool['at']>,
     signal: AbortSignal,
+    securityCode?: string,
   ): Promise<void> {
     const saleAt = job.testMode ? null : job.saleTime ? parseJstSaleTime(job.saleTime) : null;
     if (saleAt) {
@@ -345,8 +399,13 @@ export class JobManager {
     job.status = 'running';
 
     const productUrl = job.productUrls[0];
-    const outcome = await this.httpCheckout.checkout(session, account, productUrl, proxy, (msg) =>
-      this.log(job, 'info', msg),
+    const outcome = await this.httpCheckout.checkout(
+      session,
+      account,
+      productUrl,
+      proxy,
+      (msg) => this.log(job, 'info', msg),
+      securityCode,
     );
 
     await this.completeJobSuccess(job, productUrl, outcome.orderId, outcome.durationMs, proxy);
@@ -358,14 +417,37 @@ export class JobManager {
     account: { email: string; password: string },
     proxy: ReturnType<ProxyPool['at']>,
     signal: AbortSignal,
+    securityCode?: string,
   ): Promise<void> {
     job.status = 'running';
+
+    const saleAt = job.testMode ? null : job.saleTime ? parseJstSaleTime(job.saleTime) : null;
+    if (saleAt) {
+      const waitMs = saleAt.getTime() - Date.now();
+      if (waitMs > 0) {
+        job.status = 'waiting';
+        this.log(job, 'info', `Waiting for sale at ${saleAt.toISOString()} before monitoring`);
+        await sleep(waitMs, signal).catch(() => {
+          if (job.cancelRequested) throw new Error('cancelled');
+        });
+      }
+    }
+
+    if (job.cancelRequested) return;
+    job.status = 'running';
+
+    const pollMs = job.monitorPollIntervalMs ?? this.config.monitorPollIntervalMs;
 
     if (job.testMode) {
       const url = job.productUrls[0];
       this.log(job, 'info', `Test mode: checkout now (${url})`);
-      const outcome = await this.httpCheckout.checkout(session, account, url, proxy, (msg) =>
-        this.log(job, 'info', msg),
+      const outcome = await this.httpCheckout.checkout(
+        session,
+        account,
+        url,
+        proxy,
+        (msg) => this.log(job, 'info', msg),
+        securityCode,
       );
       await this.completeJobSuccess(job, url, outcome.orderId, outcome.durationMs, proxy);
       return;
@@ -378,16 +460,21 @@ export class JobManager {
       for (const url of job.productUrls) {
         if (await this.httpCheckout.checkProductAvailable(session, url, proxy, (msg) => this.log(job, 'info', msg))) {
           this.log(job, 'info', `Product available: ${url}`);
-          const outcome = await this.httpCheckout.checkout(session, account, url, proxy, (msg) =>
-            this.log(job, 'info', msg),
+          const outcome = await this.httpCheckout.checkout(
+            session,
+            account,
+            url,
+            proxy,
+            (msg) => this.log(job, 'info', msg),
+            securityCode,
           );
           await this.completeJobSuccess(job, url, outcome.orderId, outcome.durationMs, proxy);
           return;
         }
       }
       attempts += 1;
-      this.log(job, 'info', `Monitor poll #${attempts} — not yet available`);
-      await sleep(this.config.monitorPollIntervalMs, signal).catch(() => {
+      this.log(job, 'info', `Monitor poll #${attempts} — not yet available (${pollMs}ms interval)`);
+      await sleep(pollMs, signal).catch(() => {
         if (job.cancelRequested) throw new Error('cancelled');
       });
     }
@@ -531,18 +618,14 @@ export class JobManager {
     signal: AbortSignal,
   ): Promise<void> {
     const saleAt = job.testMode ? null : job.saleTime ? parseJstSaleTime(job.saleTime) : null;
+    const preLoginAt = resolvePreLoginAt(job, saleAt, this.config);
 
-    if (saleAt) {
-      const preLoginMs = randomPreLoginMs(
-        this.config.preLoginMinMinutes,
-        this.config.preLoginMaxMinutes,
-      );
-      const preLoginAt = new Date(saleAt.getTime() - preLoginMs);
+    if (preLoginAt) {
       const waitMs = preLoginAt.getTime() - Date.now();
 
       if (waitMs > 0) {
         job.status = 'waiting';
-        this.log(job, 'info', `Waiting until pre-login at ${preLoginAt.toISOString()}`);
+        this.log(job, 'info', `Waiting until login at ${preLoginAt.toISOString()} (${job.loginTime ?? 'pre-sale'} JST)`);
         await sleep(waitMs, signal).catch(() => {
           if (job.cancelRequested) throw new Error('cancelled');
         });
