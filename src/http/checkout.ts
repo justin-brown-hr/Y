@@ -8,7 +8,7 @@ import { fetchProductHtmlWithBrowser } from './login-browser.js';
 import type { Account, AppConfig, ProxyConfig } from '../config.js';
 import { CheckoutError } from '../utils/errors.js';
 import { resolveYodobashiUrl, normalizeProductUrl } from './url-utils.js';
-import { orderIdInHistory, parseOrderCompletePage } from './order-verify.js';
+import { orderIdInHistory, pageTitle, parseOrderCompletePage } from './order-verify.js';
 
 export interface HttpCheckoutResult {
   success: boolean;
@@ -30,10 +30,19 @@ function parseFormFields(html: string, selector = 'form'): Record<string, string
     const type = ($(el).attr('type') ?? '').toLowerCase();
     if (type === 'submit' || type === 'button' || type === 'image') return;
     if (type === 'checkbox' || type === 'radio') {
-      if (!$(el).attr('checked')) return;
+      const checked = $(el).attr('checked') !== undefined || $(el).prop('checked');
+      if (!checked) return;
     }
     fields[name] = $(el).val()?.toString() ?? $(el).attr('value') ?? '';
   });
+
+  // Include primary submit control when the form uses image/button submit names.
+  $(`${selector} input[type="submit"], ${selector} button[type="submit"]`).each((_, el) => {
+    const name = $(el).attr('name');
+    if (!name || fields[name]) return;
+    fields[name] = $(el).attr('value') ?? $(el).val()?.toString() ?? '1';
+  });
+
   return fields;
 }
 
@@ -253,11 +262,23 @@ export class YodobashiHttpCheckout {
       (await session.get(`${API.orderPayment}${paymentKey}`, confirmUrl)).data,
     );
     const paymentFields = parseFormFields(paymentHtml);
+    const needsCvv =
+      Boolean(paymentFields['creditCard.securityCode']) ||
+      paymentHtml.includes('name="creditCard.securityCode"') ||
+      paymentHtml.includes("name='creditCard.securityCode'");
+
+    if (needsCvv && !securityCode) {
+      throw new CheckoutError(
+        'CVV required — add SECURITY_CODE to .env or CVV on account profile (card must be saved on Yodobashi)',
+        'payment_declined',
+      );
+    }
+
     if (paymentFields['creditCard.securityCode'] && securityCode) {
       paymentFields['creditCard.securityCode'] = securityCode;
-    } else if (paymentFields['creditCard.securityCode'] && !securityCode) {
-      log('WARNING: Payment page requires CVV but none configured');
     }
+
+    log(`payment form fields: ${Object.keys(paymentFields).length}, needsCvv=${needsCvv}`);
 
     const paymentPostRes = await session.postForm(
       API.orderPaymentAction,
@@ -268,54 +289,47 @@ export class YodobashiHttpCheckout {
     const paymentPostHtml = String(paymentPostRes.data);
     log(`callPostPayment result: ${paymentPostUrl}`);
 
-    if (paymentPostUrl.includes('reinputcredit') || paymentPostHtml.includes('セキュリティコード')) {
-      throw new CheckoutError(
-        'CVV/security code required — set SECURITY_CODE in .env or CVV on account profile',
-        'payment_declined',
-      );
+    const completeKey = extractNodeStateKey(paymentPostUrl) ?? paymentKey;
+    let completeHtml = paymentPostHtml;
+    let completeUrl = paymentPostUrl;
+
+    if (!paymentPostUrl.includes('/order/complete/')) {
+      log(`start callComplete ${account.email}`);
+      const completeRes = await session.get(`${API.orderComplete}${completeKey}`, paymentPostUrl);
+      completeHtml = String(completeRes.data);
+      completeUrl = session.finalUrl(completeRes);
+      log(`callComplete url: ${completeUrl}`);
+    } else {
+      log(`callComplete skipped — payment POST already on complete page`);
     }
 
-    const postComplete = parseOrderCompletePage(paymentPostHtml, paymentPostUrl);
-    if (postComplete.ok) {
-      log(`Order confirmed on payment response: ${postComplete.orderId}`);
-      const verified = await this.verifyOrderHistory(session, postComplete.orderId, log);
+    log(`complete page title: ${pageTitle(completeHtml)}`);
+
+    const complete = parseOrderCompletePage(completeHtml, completeUrl);
+    if (complete.ok) {
+      const verified = await this.verifyOrderHistory(session, complete.orderId, log);
       if (!verified) {
         throw new CheckoutError(
-          `Payment response showed order ${postComplete.orderId} but it is not in order history`,
+          `Confirmation page showed order ${complete.orderId} but it is not in order history yet`,
           'payment_declined',
         );
       }
-      log(`buy success ${account.email} orderId=${postComplete.orderId}`);
-      return { success: true, orderId: postComplete.orderId, durationMs: Date.now() - start };
+      log(`buy success ${account.email} orderId=${complete.orderId}`);
+      return { success: true, orderId: complete.orderId, durationMs: Date.now() - start };
     }
 
-    log(`start callComplete ${account.email}`);
-    const completeRes = await session.get(`${API.orderComplete}${paymentKey}`, paymentPostUrl);
-    const completeHtml = String(completeRes.data);
-    const completeUrl = session.finalUrl(completeRes);
-    log(`callComplete url: ${completeUrl}`);
-
-    const complete = parseOrderCompletePage(completeHtml, completeUrl);
-    if (!complete.ok) {
-      if (completeHtml.includes('在庫')) {
-        throw new CheckoutError('Out of stock at checkout', 'out_of_stock', true);
-      }
-      if (completeHtml.includes('カード') || completeHtml.includes('決済')) {
-        throw new CheckoutError(complete.reason, 'payment_declined');
-      }
-      throw new CheckoutError(complete.reason, 'checkout_timeout');
+    const detail = complete.hint ? `${complete.reason} — ${complete.hint}` : complete.reason;
+    if (completeHtml.includes('在庫')) {
+      throw new CheckoutError('Out of stock at checkout', 'out_of_stock', true);
     }
-
-    const verified = await this.verifyOrderHistory(session, complete.orderId, log);
-    if (!verified) {
-      throw new CheckoutError(
-        `Confirmation page shown but order ${complete.orderId} not found in order history — payment may not have completed`,
-        'payment_declined',
-      );
+    if (
+      completeHtml.includes('カード') ||
+      completeHtml.includes('決済') ||
+      completeHtml.includes('セキュリティコード')
+    ) {
+      throw new CheckoutError(detail, 'payment_declined');
     }
-
-    log(`buy success ${account.email} orderId=${complete.orderId}`);
-    return { success: true, orderId: complete.orderId, durationMs: Date.now() - start };
+    throw new CheckoutError(detail, 'checkout_timeout');
   }
 
   /** Cross-check order history so we do not report success without a real purchase. */
