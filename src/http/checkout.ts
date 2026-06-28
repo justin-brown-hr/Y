@@ -8,6 +8,7 @@ import { fetchProductHtmlWithBrowser } from './login-browser.js';
 import type { Account, AppConfig, ProxyConfig } from '../config.js';
 import { CheckoutError } from '../utils/errors.js';
 import { resolveYodobashiUrl, normalizeProductUrl } from './url-utils.js';
+import { orderIdInHistory, parseOrderCompletePage } from './order-verify.js';
 
 export interface HttpCheckoutResult {
   success: boolean;
@@ -254,29 +255,93 @@ export class YodobashiHttpCheckout {
     const paymentFields = parseFormFields(paymentHtml);
     if (paymentFields['creditCard.securityCode'] && securityCode) {
       paymentFields['creditCard.securityCode'] = securityCode;
+    } else if (paymentFields['creditCard.securityCode'] && !securityCode) {
+      log('WARNING: Payment page requires CVV but none configured');
     }
-    await session.postForm(API.orderPaymentAction, paymentFields, `${API.orderPayment}${paymentKey}`);
+
+    const paymentPostRes = await session.postForm(
+      API.orderPaymentAction,
+      paymentFields,
+      `${API.orderPayment}${paymentKey}`,
+    );
+    const paymentPostUrl = session.finalUrl(paymentPostRes);
+    const paymentPostHtml = String(paymentPostRes.data);
+    log(`callPostPayment result: ${paymentPostUrl}`);
+
+    if (paymentPostUrl.includes('reinputcredit') || paymentPostHtml.includes('セキュリティコード')) {
+      throw new CheckoutError(
+        'CVV/security code required — set SECURITY_CODE in .env or CVV on account profile',
+        'payment_declined',
+      );
+    }
+
+    const postComplete = parseOrderCompletePage(paymentPostHtml, paymentPostUrl);
+    if (postComplete.ok) {
+      log(`Order confirmed on payment response: ${postComplete.orderId}`);
+      const verified = await this.verifyOrderHistory(session, postComplete.orderId, log);
+      if (!verified) {
+        throw new CheckoutError(
+          `Payment response showed order ${postComplete.orderId} but it is not in order history`,
+          'payment_declined',
+        );
+      }
+      log(`buy success ${account.email} orderId=${postComplete.orderId}`);
+      return { success: true, orderId: postComplete.orderId, durationMs: Date.now() - start };
+    }
 
     log(`start callComplete ${account.email}`);
-    const completeRes = await session.get(`${API.orderComplete}${paymentKey}`, API.orderPayment);
+    const completeRes = await session.get(`${API.orderComplete}${paymentKey}`, paymentPostUrl);
     const completeHtml = String(completeRes.data);
     const completeUrl = session.finalUrl(completeRes);
+    log(`callComplete url: ${completeUrl}`);
 
-    if (!completeHtml.includes('ご注文ありがとう') && !completeUrl.includes('complete')) {
+    const complete = parseOrderCompletePage(completeHtml, completeUrl);
+    if (!complete.ok) {
       if (completeHtml.includes('在庫')) {
         throw new CheckoutError('Out of stock at checkout', 'out_of_stock', true);
       }
       if (completeHtml.includes('カード') || completeHtml.includes('決済')) {
-        throw new CheckoutError('Payment declined', 'payment_declined');
+        throw new CheckoutError(complete.reason, 'payment_declined');
       }
-      throw new CheckoutError('Checkout did not reach confirmation page', 'checkout_timeout');
+      throw new CheckoutError(complete.reason, 'checkout_timeout');
     }
 
-    const orderId =
-      completeHtml.match(/注文番号[：:\s]*([A-Z0-9-]+)/i)?.[1] ??
-      completeHtml.match(/(\d{10,})/)?.[1];
+    const verified = await this.verifyOrderHistory(session, complete.orderId, log);
+    if (!verified) {
+      throw new CheckoutError(
+        `Confirmation page shown but order ${complete.orderId} not found in order history — payment may not have completed`,
+        'payment_declined',
+      );
+    }
 
-    log(`buy success ${account.email} true`);
-    return { success: true, orderId, durationMs: Date.now() - start };
+    log(`buy success ${account.email} orderId=${complete.orderId}`);
+    return { success: true, orderId: complete.orderId, durationMs: Date.now() - start };
+  }
+
+  /** Cross-check order history so we do not report success without a real purchase. */
+  private async verifyOrderHistory(
+    session: HttpSession,
+    orderId: string,
+    log: (msg: string) => void,
+  ): Promise<boolean> {
+    log(`verifyOrderHistory ${orderId}`);
+    try {
+      const historyRes = await session.get(API.orderHistory, API.orderComplete);
+      if (orderIdInHistory(String(historyRes.data), orderId)) {
+        log('Order verified in order history');
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+      const retryRes = await session.get(API.orderHistory, API.orderHistory);
+      if (orderIdInHistory(String(retryRes.data), orderId)) {
+        log('Order verified in order history (retry)');
+        return true;
+      }
+      return false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
+      log(`verifyOrderHistory failed: ${msg}`);
+      return false;
+    }
   }
 }
